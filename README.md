@@ -40,3 +40,12 @@ Proton. Runs only on the AYN Odin 2 Portal under Armada OS, inside Steam Game Mo
 distrobox enter lsfg-vk-build -- bash -lc 'cd ~/mercury/build && curl -sSfL https://www.rarlab.com/rar/unrarsrc-7.3.1.tar.gz | tar xz && make -C unrar -j8'
 cp ~/mercury/build/unrar/unrar ~/.local/share/mercury/bin/
 ```
+
+## License
+
+MIT, see [LICENSE](LICENSE). Anyone may use, copy, modify and redistribute this code.
+
+`plugin/rollup.config.js`, `plugin/tsconfig.json`, `plugin/decky.pyi` and the starting point of
+`plugin/package.json` come from [decky-plugin-template](https://github.com/SteamDeckHomebrew/decky-plugin-template),
+used under the BSD 3-Clause License. Its notice is kept in
+[plugin/LICENSE.decky-plugin-template](plugin/LICENSE.decky-plugin-template).
