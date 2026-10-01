@@ -208,6 +208,19 @@ impl Manager {
         std::thread::spawn(move || {
             let _ = std::fs::remove_dir_all(&dir);
             let _ = std::fs::remove_dir_all(home().join(format!(".local/share/Steam/steamapps/compatdata/{sid}")));
+            // Steam leaves a removed shortcut's custom art behind in every user's grid folder.
+            if let Ok(users) = std::fs::read_dir(home().join(".local/share/Steam/userdata")) {
+                for u in users.flatten() {
+                    if let Ok(files) = std::fs::read_dir(u.path().join("config/grid")) {
+                        for f in files.flatten() {
+                            let n = f.file_name().to_string_lossy().to_string();
+                            if n.starts_with(&sid.to_string()) && n[sid.to_string().len()..].starts_with(['.', '_', 'p']) {
+                                let _ = std::fs::remove_file(f.path());
+                            }
+                        }
+                    }
+                }
+            }
         });
         Ok(e)
     }
