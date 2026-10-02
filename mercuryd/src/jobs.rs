@@ -72,6 +72,8 @@ pub struct Entry {
     #[serde(default)] pub needs_repoint: bool,
     /// Destination while a move is running.
     #[serde(default)] pub moving_to: Option<PathBuf>,
+    /// Launch options the Steam shortcut should have (OnlineFix DLL overrides it lacks); the plugin sets them, then clears this.
+    #[serde(default)] pub launch_options_fix: Option<String>,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -123,6 +125,13 @@ impl Manager {
                 e.source_name = Some(src.name.clone());
                 if e.version.is_none() { e.version = src.version.clone().or_else(|| crate::sources::version_in(&src.name)); }
             }
+        }
+        // Installed games whose OnlineFix never loads: their shortcut has no DLL overrides yet.
+        let shortcuts = crate::shortcuts::list();
+        for e in saved.library.iter_mut().filter(|e| e.launch_options_fix.is_none()) {
+            let Some(sc) = shortcuts.iter().find(|s| s.appid == e.shortcut_id) else { continue };
+            let want = install::launch_options(&sc.launch_options, &e.exe);
+            if want != sc.launch_options { tracing::info!("{} needs OnlineFix DLL overrides", e.name); e.launch_options_fix = Some(want); }
         }
         // Anything interrupted by a restart waits for the user rather than resuming on its own.
         for j in saved.jobs.iter_mut() {
@@ -286,7 +295,7 @@ impl Manager {
         let entry = Entry { appid: job.appid, name: job.name.clone(), size: storage::dir_size(&dir), dir, exe: exe.clone(), shortcut_id,
             provider: job.source.provider.clone(), version, installed: now(),
             installer_dir: if repack { job.dir.clone() } else { old.and_then(|e| e.installer_dir) },
-            source_name: Some(job.source.name.clone()), source_updated: job.source.updated.clone(), needs_repoint: false, moving_to: None };
+            source_name: Some(job.source.name.clone()), source_updated: job.source.updated.clone(), needs_repoint: false, moving_to: None, launch_options_fix: None };
         {
             let mut s = self.saved.lock().unwrap();
             s.library.retain(|e| e.appid != job.appid);
@@ -416,6 +425,12 @@ impl Manager {
             m.save(&s);
         });
         Ok(e)
+    }
+
+    pub fn launch_options_set(&self, appid: u32) {
+        let mut s = self.saved.lock().unwrap();
+        if let Some(e) = s.library.iter_mut().find(|e| e.appid == appid) { e.launch_options_fix = None; }
+        self.save(&s);
     }
 
     pub fn repointed(&self, appid: u32) {

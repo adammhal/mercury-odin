@@ -16,7 +16,7 @@ export type UpdateInfo = { current?: string | null; provider: string; newer?: { 
 export type Availability = "cached" | "not_cached" | "blocked" | "unknown";
 export type LocalFile = { path: string; name: string; size: number; modified: number; finished: boolean; archive: boolean };
 export type Entry = { appid: number; name: string; dir: string; exe: string; shortcut_id: number; provider: string; size: number; version?: string | null;
-  installed: number; source_name?: string | null; needs_repoint?: boolean; moving_to?: string | null };
+  installed: number; source_name?: string | null; needs_repoint?: boolean; moving_to?: string | null; launch_options_fix?: string | null };
 export type Location = { label: string; path: string; free: number; total: number; default: boolean };
 export type SteamShortcut = { appid: number; name: string; exe: string; start_dir: string; launch_options: string };
 export type Status = { version: string; rd_key_set: boolean; unrar: boolean; installer_launch_options?: string | null; storage: { total: number; free: number; mercury: number } };
@@ -71,6 +71,8 @@ export const api = {
   uninstall: (appid: number) => req<Entry>(`/library/${appid}/uninstall`, "POST", {}),
   locations: () => req<Location[]>("/locations"),
   moveGame: (appid: number, to: string) => req<Entry>(`/library/${appid}/move`, "POST", { to }),
+  launchOptions: (exe: string) => req<{ launch_options: string }>("/launch-options", "POST", { exe }),
+  launchOptionsSet: (appid: number) => req<unknown>(`/library/${appid}/launch-options-set`, "POST", {}),
   repointed: (appid: number) => req<unknown>(`/library/${appid}/repointed`, "POST", {}),
   steamShortcuts: () => req<SteamShortcut[]>("/steam/shortcuts"),
   adopt: (b: { appid: number; name: string; dir: string; exe: string; shortcut_id: number; provider?: string }) => req<Entry>("/library/adopt", "POST", b),

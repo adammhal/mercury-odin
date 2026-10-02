@@ -19,10 +19,12 @@ async function applyArt(shortcut: number, steamAppid: number) {
   if (icon) await step("icon", SteamClient.Apps.SetShortcutIcon(shortcut, icon));
 }
 
-async function configure(shortcut: number, name: string) {
+async function configure(shortcut: number, name: string, exe: string) {
   const cfg = await api.config();
+  // The configured options, plus DLL overrides when the game carries OnlineFix.
+  const { launch_options } = await api.launchOptions(exe);
   await step("name", SteamClient.Apps.SetShortcutName(shortcut, name));
-  if (cfg.launch_options) await step("launch options", SteamClient.Apps.SetShortcutLaunchOptions(shortcut, cfg.launch_options));
+  if (launch_options) await step("launch options", SteamClient.Apps.SetShortcutLaunchOptions(shortcut, launch_options));
   await step("Proton", SteamClient.Apps.SpecifyCompatTool(shortcut, cfg.proton_tool));
 }
 
@@ -40,7 +42,7 @@ export async function addToSteam(job: Job, exe = job.exe ?? ""): Promise<number>
     if (!id) throw new Error("Steam did not create the shortcut");
     await api.act(job.id, "shortcut-created", { shortcut_id: id });
   }
-  await configure(id, job.name);
+  await configure(id, job.name, exe);
   await applyArt(id, job.appid);
   await api.act(job.id, "steam-added", { shortcut_id: id, exe });
   log(job.name, "done, shortcut", id);
@@ -98,7 +100,7 @@ export async function readdToSteam(e: Entry): Promise<number> {
   const dir = e.exe.slice(0, e.exe.lastIndexOf("/") + 1);
   const id = Number(await step("AddShortcut", SteamClient.Apps.AddShortcut(e.name, e.exe, dir, "")));
   if (!id) throw new Error("Steam did not create the shortcut");
-  await configure(id, e.name);
+  await configure(id, e.name, e.exe);
   await applyArt(id, e.appid);
   await api.setShortcut(e.appid, id);
   log(e.name, "re-added as shortcut", id);

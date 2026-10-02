@@ -87,8 +87,59 @@ pub fn find_game_exe(dir: &Path, title: &str) -> Vec<Candidate> {
     out
 }
 
+/// OnlineFix hooks in through a proxy of a Windows system DLL (winmm.dll and the like) next to the game, which then
+/// loads OnlineFix64.dll and the DLLs in dlllist.txt. Wine prefers its own system DLLs, so without an override the
+/// fix never loads and multiplayer fails. Returns the WINEDLLOVERRIDES value, and switches the fix to English.
+pub fn onlinefix_overrides(exe: &Path) -> Option<String> {
+    let dir = exe.parent()?;
+    let names: std::collections::HashMap<String, String> = std::fs::read_dir(dir).ok()?.flatten()
+        .map(|e| { let n = e.file_name().to_string_lossy().to_string(); (n.to_lowercase(), n) }).collect();
+    let fix = ["onlinefix64.dll", "onlinefix.dll"].into_iter().find(|n| names.contains_key(*n))?;
+    let mut out: Vec<String> = ["winmm", "version", "winhttp", "dinput8", "dnet"].iter()
+        .filter(|p| names.contains_key(&format!("{p}.dll"))).map(|p| format!("{p}=n,b")).collect();
+    let mut native = vec![names[fix].trim_end_matches(".dll").trim_end_matches(".DLL").to_string()];
+    if let Some(list) = names.get("dlllist.txt").and_then(|n| std::fs::read_to_string(dir.join(n)).ok()) {
+        for l in list.lines().map(str::trim).filter(|l| !l.is_empty()) {
+            let stem = l.strip_suffix(".dll").or_else(|| l.strip_suffix(".DLL")).unwrap_or(l).to_string();
+            if !native.iter().chain(out.iter()).any(|n| n.split('=').next().unwrap().eq_ignore_ascii_case(&stem)) { native.push(stem); }
+        }
+    }
+    out.extend(native.into_iter().map(|n| format!("{n}=n")));
+    if let Some(ini) = names.get("onlinefix.ini").map(|n| dir.join(n)) {
+        if let Ok(text) = std::fs::read_to_string(&ini) {
+            let fixed: Vec<String> = text.lines().map(|l| if l.trim_start().to_lowercase().starts_with("language=") { "Language=english".into() } else { l.to_string() }).collect();
+            let fixed = fixed.join("\n") + if text.ends_with('\n') { "\n" } else { "" };
+            if fixed != text { let _ = std::fs::write(&ini, fixed); }
+        }
+    }
+    Some(out.join(";"))
+}
+
+/// `base` (the configured launch options) with OnlineFix's DLL overrides in front when the game needs them.
+pub fn launch_options(base: &str, exe: &Path) -> String {
+    match onlinefix_overrides(exe) {
+        Some(o) if !base.contains("WINEDLLOVERRIDES") => format!("WINEDLLOVERRIDES=\"{o}\" {base}").trim_end().to_string(),
+        _ => base.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn onlinefix() {
+        let d = std::env::temp_dir().join(format!("mercury-of-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        for f in ["Game.exe", "winmm.dll", "OnlineFix64.dll"] { std::fs::write(d.join(f), b"").unwrap(); }
+        std::fs::write(d.join("dlllist.txt"), "SteamOverlay64.dll\nOnlineFix64.dll").unwrap();
+        std::fs::write(d.join("OnlineFix.ini"), "[Main]\nLanguage=russian\nBuildId=0\n").unwrap();
+        let o = super::launch_options("run %command%", &d.join("Game.exe"));
+        assert_eq!(o, r#"WINEDLLOVERRIDES="winmm=n,b;OnlineFix64=n;SteamOverlay64=n" run %command%"#);
+        assert_eq!(std::fs::read_to_string(d.join("OnlineFix.ini")).unwrap(), "[Main]\nLanguage=english\nBuildId=0\n");
+        std::fs::write(d.join("Other.exe"), b"").unwrap();
+        assert_eq!(super::launch_options(&o, &d.join("Game.exe")), o);
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
     use super::*;
     #[test]
     fn picks_the_game_not_helpers() {

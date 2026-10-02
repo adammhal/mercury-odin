@@ -258,6 +258,14 @@ async fn move_game(State(a): State<App>, Path(appid): Path<u32>, Json(b): Json<M
     Ok(Json(json!(a.m.start_move(appid, b.to)?)))
 }
 
+#[derive(Deserialize)]
+struct ExeBody { exe: std::path::PathBuf }
+/// Launch options for a game's shortcut: the configured ones, plus DLL overrides if it carries OnlineFix.
+async fn launch_options(State(a): State<App>, Json(b): Json<ExeBody>) -> R {
+    Ok(Json(json!({ "launch_options": install::launch_options(&cfg(&a).launch_options, &b.exe) })))
+}
+async fn launch_options_set(State(a): State<App>, Path(appid): Path<u32>) -> R { a.m.launch_options_set(appid); Ok(Json(json!({ "ok": true }))) }
+
 async fn repointed(State(a): State<App>, Path(appid): Path<u32>) -> R { a.m.repointed(appid); Ok(Json(json!({ "ok": true }))) }
 
 /// The user's non-Steam shortcuts that Mercury does not manage yet (candidates for adopting).
@@ -278,7 +286,7 @@ async fn adopt(State(a): State<App>, Json(b): Json<AdoptBody>) -> R {
     if !b.exe.starts_with(&b.dir) { return Err(anyhow::anyhow!("exe must be inside dir").into()); }
     let e = jobs::Entry { appid: b.appid, name: b.name, dir: b.dir, exe: b.exe, shortcut_id: b.shortcut_id,
         provider: b.provider.unwrap_or_else(|| "Added by hand".into()), size: 0, version: b.version, installed: 0, installer_dir: None, source_name: None,
-        source_updated: None, needs_repoint: false, moving_to: None };
+        source_updated: None, needs_repoint: false, moving_to: None, launch_options_fix: None };
     tracing::info!("adopt: {} ({}) shortcut {}", e.name, e.appid, e.shortcut_id);
     Ok(Json(json!(a.m.adopt(e)?)))
 }
@@ -319,6 +327,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/library/adopt", post(adopt))
         .route("/library/{appid}/move", post(move_game))
         .route("/library/{appid}/repointed", post(repointed))
+        .route("/library/{appid}/launch-options-set", post(launch_options_set))
+        .route("/launch-options", post(launch_options))
         .route("/locations", get(list_locations))
         .route("/steam/shortcuts", get(steam_shortcuts))
         .route("/import", get(import_candidates).post(import_game))

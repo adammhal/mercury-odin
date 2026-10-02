@@ -70,6 +70,13 @@ function startWatcher() {
         toaster.toast({ title: "Mercury", body: `${e.name} moved` });
       } catch (err: any) { console.log("[Mercury] repoint failed", e.name, err?.message); }
     }
+    for (const e of lib.filter((x) => x.launch_options_fix)) {
+      try {
+        await SteamClient.Apps.SetShortcutLaunchOptions(e.shortcut_id, e.launch_options_fix);
+        await api.launchOptionsSet(e.appid);
+        console.log("[Mercury] launch options for", e.name, e.launch_options_fix);
+      } catch (err: any) { console.log("[Mercury] launch options failed", e.name, err?.message); }
+    }
     for (const e of lib) {
       const exists = shortcutExists(e.shortcut_id);
       if (exists !== false) { missingSince.delete(e.appid); announced.delete(e.appid); continue; }
