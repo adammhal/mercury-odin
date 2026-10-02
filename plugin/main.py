@@ -10,6 +10,40 @@ BIN = os.path.join(decky.DECKY_PLUGIN_DIR, "bin", "mercuryd")
 LOG = os.path.join(decky.DECKY_USER_HOME, ".local/share/mercury/mercuryd.log")
 
 
+def _engine_pids() -> list:
+    """Every running mercuryd. Only this plugin starts them, so any it does not own is left over."""
+    out = []
+    for d in os.listdir("/proc"):
+        if not d.isdigit():
+            continue
+        try:
+            with open(f"/proc/{d}/comm") as f:
+                if f.read().strip() == "mercuryd":
+                    out.append(int(d))
+        except OSError:
+            pass
+    return out
+
+
+def _stop_pids(pids, timeout=5.0):
+    import signal
+    import time
+    for p in pids:
+        try:
+            os.kill(p, signal.SIGTERM)
+        except OSError:
+            pass
+    end = time.time() + timeout
+    while time.time() < end and any(os.path.exists(f"/proc/{p}") for p in pids):
+        time.sleep(0.1)
+    for p in pids:
+        if os.path.exists(f"/proc/{p}"):
+            try:
+                os.kill(p, signal.SIGKILL)
+            except OSError:
+                pass
+
+
 def _listening() -> bool:
     with socket.socket() as s:
         s.settimeout(0.3)
@@ -29,6 +63,12 @@ class Plugin:
         decky.logger.info(f"started mercuryd pid {self.proc.pid}")
 
     async def _main(self):
+        # An engine left over from a previous plugin instance (for example after a reload) would keep the port
+        # and keep running an old binary. Replace it with ours.
+        stray = _engine_pids()
+        if stray:
+            decky.logger.info(f"stopping leftover mercuryd {stray}")
+            await asyncio.to_thread(_stop_pids, stray)
         delay = 2
         while not self.stopping:
             if self.proc is None or self.proc.poll() is not None:
@@ -37,8 +77,10 @@ class Plugin:
                     await asyncio.sleep(delay)
                     delay = min(delay * 2, 60)
                 if _listening():
-                    # Another copy owns the port (for example one started by hand). Leave it alone.
-                    await asyncio.sleep(5)
+                    stray = [p for p in _engine_pids() if not (self.proc and p == self.proc.pid)]
+                    decky.logger.warning(f"port {PORT} held by {stray or 'another process'}; stopping it")
+                    await asyncio.to_thread(_stop_pids, stray)
+                    await asyncio.sleep(1)
                     continue
                 self._start()
             elif delay > 2:
@@ -47,13 +89,14 @@ class Plugin:
 
     async def _unload(self):
         self.stopping = True
-        if self.proc and self.proc.poll() is None:
-            self.proc.terminate()
+        pids = _engine_pids()
+        await asyncio.to_thread(_stop_pids, pids)
+        if self.proc:
             try:
-                self.proc.wait(timeout=5)
+                self.proc.wait(timeout=1)
             except subprocess.TimeoutExpired:
-                self.proc.kill()
-        decky.logger.info("mercuryd stopped")
+                pass
+        decky.logger.info(f"mercuryd stopped {pids}")
 
     async def store_app(self) -> int:
         """App ID of the Steam store page that is open, or 0."""
