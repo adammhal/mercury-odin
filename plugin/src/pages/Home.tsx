@@ -48,11 +48,11 @@ export function Home() {
   const [info, setInfo] = useState<App>();
   const settle = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
-  const installed: Item[] = useMemo(() => (lib ?? []).map((e) => ({ appid: e.appid, name: e.name, tag: "Installed" })), [lib]);
+  // Home is the wishlist only; installed games live in Library, so they are left out here.
   const wishlist: Item[] = useMemo(() => {
-    const have = new Set(installed.map((i) => i.appid));
+    const have = new Set((lib ?? []).map((e) => e.appid));
     return (wish ?? []).filter((a) => !have.has(a.appid)).map((a) => ({ appid: a.appid, name: a.name }));
-  }, [wish, installed]);
+  }, [wish, lib]);
   const active = (jobs ?? []).filter((j) => !["done", "failed", "cancelled"].includes(j.state)).length;
 
   // Focus moves instantly (Steam draws the outline); the hero follows once the D-pad stops.
@@ -67,12 +67,11 @@ export function Home() {
   }, []);
   useEffect(() => () => clearTimeout(settle.current), []);
 
-  useEffect(() => { if (!cur) setCur(installed[0] ?? wishlist[0]); }, [installed, wishlist]);
+  useEffect(() => { if (!cur) setCur(wishlist[0]); }, [wishlist]);
   // Which cover gets focus when the page opens: the one you left from, if it is still listed.
   const focusId = useMemo(() => {
-    const all = [...installed, ...wishlist];
-    return all.find((i) => i.appid === lastFocus?.appid)?.appid ?? all[0]?.appid;
-  }, [installed, wishlist]);
+    return wishlist.find((i) => i.appid === lastFocus?.appid)?.appid ?? wishlist[0]?.appid;
+  }, [wishlist]);
   useEffect(() => {
     if (!cur) return;
     const w = wish?.find((a) => a.appid === cur.appid);
@@ -108,8 +107,7 @@ export function Home() {
       </div>
 
       <div style={{ position: "relative", flex: "none", height: 176, marginBottom: 40, overflowY: "auto", scrollbarWidth: "none" }}>
-        {!wish && !lib && <div style={{ marginLeft: 32, color: C.dim, fontSize: 12 }}>Loading your Steam wishlist…</div>}
-        <Row title="Installed with Mercury" items={installed} onFocus={onFocus} focusId={focusId} />
+        {!wish && <div style={{ marginLeft: 32, color: C.dim, fontSize: 12 }}>Loading your Steam wishlist…</div>}
         <Row title="Your Steam wishlist" items={wishlist} onFocus={onFocus} focusId={focusId} />
       </div>
     </div>
