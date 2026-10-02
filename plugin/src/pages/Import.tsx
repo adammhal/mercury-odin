@@ -79,6 +79,16 @@ export function Import() {
           For games installed or downloaded somewhere else, such as a repack installed on your PC. Put the game folder (or its .zip, .rar or .7z) on the microSD card,
           in {data?.drop_folder ?? "~/Games/Import"} over SSH, or in Downloads.
         </div>
+        {(data?.unmounted_cards ?? []).map((card) => (
+          <Focusable key={card.device} flow-children="horizontal" style={{ display: "flex", alignItems: "center", gap: 10, background: "rgba(229,165,10,.12)", border: "1px solid rgba(229,165,10,.35)", borderRadius: 6, padding: "8px 12px", marginBottom: 10 }}>
+            <div style={{ flex: 1, fontSize: 12 }}>microSD card {card.label ? `"${card.label}" ` : ""}({card.fstype}, {bytes(card.size)}) is not mounted. Armada mounts only ext4 cards by itself.</div>
+            <Btn style={{ height: 28, fontSize: 12 }} onClick={async () => {
+              try { await api.mountCard(card.device); toaster.toast({ title: "Mercury", body: "Card mounted" }); }
+              catch (e: any) { toaster.toast({ title: "Mercury", body: e.message }); }
+              setTick((n) => n + 1);
+            }}>Mount card</Btn>
+          </Focusable>
+        ))}
         {!data && !err && <div style={{ display: "flex", gap: 8, color: C.dim }}><Spinner style={{ width: 18 }} />Looking for games…</div>}
         {err && <div style={{ color: C.bad }}>{err}</div>}
         {data && !data.candidates.length && <div style={{ color: C.dim }}>Nothing to import yet.</div>}

@@ -10,6 +10,7 @@ export type Job = {
   dir?: string | null; setup_exe?: string | null; exe?: string | null; candidates: string[]; shortcut_id?: number | null;
   cache_progress: number; done: number; total: number; speed: number; created: number; update_of?: number | null;
 };
+export type Card = { device: string; fstype: string; label: string; size: number };
 export type ImportCandidate = { path: string; name: string; location: string; kind: "folder" | "archive"; exe?: string | null; installer: boolean; size: number };
 export type UpdateInfo = { current?: string | null; provider: string; newer?: { version: string; source: Source } | null };
 export type Availability = "cached" | "not_cached" | "blocked" | "unknown";
@@ -61,7 +62,8 @@ export const api = {
   act: (id: number, act: string, body?: object) => req<unknown>(`/jobs/${id}/${act}`, "POST", body ?? {}),
   clearJobs: () => req<{ cleared: number }>("/jobs/clear", "POST", {}),
   library: () => req<Entry[]>("/library"),
-  importCandidates: () => req<{ drop_folder: string; candidates: ImportCandidate[] }>("/import"),
+  importCandidates: () => req<{ drop_folder: string; candidates: ImportCandidate[]; unmounted_cards: Card[] }>("/import"),
+  mountCard: (device: string) => req<{ message: string }>("/import/mount", "POST", { device }),
   importGame: (path: string, appid: number, name: string, keep_in_place: boolean) => req<Job>("/import", "POST", { path, appid, name, keep_in_place }),
   uninstall: (appid: number) => req<Entry>(`/library/${appid}/uninstall`, "POST", {}),
   setShortcut: (appid: number, shortcut_id: number) => req<Entry>(`/library/${appid}/shortcut`, "POST", { shortcut_id }),

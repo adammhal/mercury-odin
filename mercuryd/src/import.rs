@@ -92,3 +92,42 @@ fn copy_dir(from: &Path, to: &Path) -> anyhow::Result<()> {
     }
     Ok(())
 }
+
+#[derive(Serialize, Clone, Debug)]
+pub struct Card {
+    pub device: String,
+    pub fstype: String,
+    pub label: String,
+    pub size: u64,
+}
+
+/// microSD partitions with a filesystem that nothing has mounted. Armada auto-mounts only ext4, so a card
+/// formatted on Windows (exFAT, NTFS) shows up here instead.
+pub fn unmounted_cards() -> Vec<Card> {
+    let Ok(out) = std::process::Command::new("lsblk").args(["-J", "-b", "-o", "NAME,FSTYPE,LABEL,SIZE,MOUNTPOINTS"]).output() else { return vec![] };
+    let Ok(v) = serde_json::from_slice::<serde_json::Value>(&out.stdout) else { return vec![] };
+    let mut cards = vec![];
+    let mut walk = vec![v["blockdevices"].clone()];
+    while let Some(serde_json::Value::Array(list)) = walk.pop() {
+        for d in list {
+            let name = d["name"].as_str().unwrap_or("");
+            let mounted = d["mountpoints"].as_array().is_some_and(|m| m.iter().any(|x| x.is_string()));
+            if name.starts_with("mmcblk") && name.contains('p') && !mounted {
+                if let Some(fs) = d["fstype"].as_str().filter(|f| !f.is_empty()) {
+                    cards.push(Card { device: format!("/dev/{name}"), fstype: fs.into(), label: d["label"].as_str().unwrap_or("").into(), size: d["size"].as_u64().unwrap_or(0) });
+                }
+            }
+            walk.push(d["children"].clone());
+        }
+    }
+    cards
+}
+
+/// Mount a card through udisks as the current user, the same mechanism Armada's automount uses.
+pub fn mount(device: &str) -> anyhow::Result<String> {
+    if !unmounted_cards().iter().any(|c| c.device == device) { anyhow::bail!("{device} is not an unmounted microSD partition"); }
+    let out = std::process::Command::new("udisksctl").args(["mount", "-b", device, "--no-user-interaction"]).output()?;
+    let text = String::from_utf8_lossy(if out.status.success() { &out.stdout } else { &out.stderr }).trim().to_string();
+    if !out.status.success() { anyhow::bail!("Could not mount {device}: {text}"); }
+    Ok(text)
+}

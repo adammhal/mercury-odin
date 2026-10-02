@@ -173,7 +173,16 @@ async fn update_check(State(a): State<App>, Path(appid): Path<u32>) -> R {
 
 async fn import_candidates() -> R {
     let _ = std::fs::create_dir_all(import::drop_folder());
-    Ok(Json(json!({ "drop_folder": import::drop_folder(), "candidates": tokio::task::spawn_blocking(import::candidates).await? })))
+    let (c, cards) = tokio::task::spawn_blocking(|| (import::candidates(), import::unmounted_cards())).await?;
+    Ok(Json(json!({ "drop_folder": import::drop_folder(), "candidates": c, "unmounted_cards": cards })))
+}
+
+#[derive(Deserialize)]
+struct MountBody { device: String }
+async fn mount_card(Json(b): Json<MountBody>) -> R {
+    let msg = tokio::task::spawn_blocking(move || import::mount(&b.device)).await??;
+    tracing::info!("mounted card: {msg}");
+    Ok(Json(json!({ "message": msg })))
 }
 
 #[derive(Deserialize)]
@@ -226,6 +235,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/jobs/{id}/{act}", post(job_action))
         .route("/library", get(library))
         .route("/import", get(import_candidates).post(import_game))
+        .route("/import/mount", post(mount_card))
         .route("/library/{appid}/uninstall", post(uninstall))
         .route("/library/{appid}/update", get(update_check))
         .route("/library/{appid}/shortcut", post(set_shortcut))
