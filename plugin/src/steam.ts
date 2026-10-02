@@ -12,10 +12,11 @@ export const gameId = (appid: number) => ((BigInt(appid >>> 0) << 32n) | 0x02000
 const dirOf = (p: string) => p.slice(0, p.lastIndexOf("/") + 1);
 
 async function applyArt(shortcut: number, steamAppid: number) {
-  const { assets } = await api.art(steamAppid);
+  const { assets, icon } = await api.art(steamAppid);
   for (const [type, ext, data] of assets) {
     await step(`art ${type}`, SteamClient.Apps.SetCustomArtworkForApp(shortcut, data, ext, type));
   }
+  if (icon) await step("icon", SteamClient.Apps.SetShortcutIcon(shortcut, icon));
 }
 
 async function configure(shortcut: number, name: string) {

@@ -92,20 +92,52 @@ pub async fn search(http: &reqwest::Client, q: &str) -> Result<Vec<App>> {
 pub struct Art {
     /// (steam asset type, file extension, base64 data). Types: 0 portrait, 1 hero, 2 logo, 3 wide.
     pub assets: Vec<(u8, String, String)>,
+    /// Icon as a file Steam can point the shortcut at (Steam has no artwork slot for shortcut icons).
+    pub icon: Option<String>,
 }
 
-pub async fn art(http: &reqwest::Client, appid: u32) -> Art {
+async fn fetch(http: &reqwest::Client, url: &str) -> Option<Vec<u8>> {
+    let r = http.get(url).send().await.ok()?;
+    if !r.status().is_success() { return None; }
+    r.bytes().await.ok().map(|b| b.to_vec()).filter(|b| !b.is_empty())
+}
+
+/// First SteamGridDB image URL of `kind` (grids, heroes, logos, icons) for a Steam app.
+async fn sgdb(http: &reqwest::Client, key: &str, appid: u32, kind: &str, query: &str) -> Option<String> {
+    let v: serde_json::Value = http.get(format!("https://www.steamgriddb.com/api/v2/{kind}/steam/{appid}{query}"))
+        .bearer_auth(key).send().await.ok()?.json().await.ok()?;
+    v["data"].as_array()?.first()?["url"].as_str().map(String::from)
+}
+
+/// Steam CDN art first; SteamGridDB (with a key) for anything missing, and for the icon.
+pub async fn art(http: &reqwest::Client, appid: u32, sgdb_key: &str) -> Art {
     let files = [(0u8, "library_600x900.jpg"), (1, "library_hero.jpg"), (2, "logo.png"), (3, "header.jpg")];
+    let fallback = [(0u8, "grids", "?dimensions=600x900"), (1, "heroes", ""), (2, "logos", ""), (3, "grids", "?dimensions=920x430,460x215")];
     let mut assets = vec![];
-    for (t, f) in files {
-        if let Ok(r) = http.get(format!("{CDN}/{appid}/{f}")).send().await {
-            if r.status().is_success() {
-                if let Ok(b) = r.bytes().await {
-                    let ext = f.rsplit('.').next().unwrap_or("jpg").to_string();
-                    assets.push((t, ext, base64::engine::general_purpose::STANDARD.encode(&b)));
+    for ((t, f), (_, kind, q)) in files.iter().zip(fallback.iter()) {
+        let mut got = fetch(http, &format!("{CDN}/{appid}/{f}")).await.map(|b| (f.rsplit('.').next().unwrap_or("jpg").to_string(), b));
+        if got.is_none() && !sgdb_key.is_empty() {
+            if let Some(url) = sgdb(http, sgdb_key, appid, kind, q).await {
+                let ext = url.rsplit('.').next().unwrap_or("png").to_lowercase();
+                got = fetch(http, &url).await.map(|b| (ext, b));
+            }
+        }
+        if let Some((ext, b)) = got {
+            assets.push((*t, ext, base64::engine::general_purpose::STANDARD.encode(&b)));
+        }
+    }
+    let mut icon = None;
+    if !sgdb_key.is_empty() {
+        if let Some(url) = sgdb(http, sgdb_key, appid, "icons", "").await {
+            if let Some(b) = fetch(http, &url).await {
+                let ext = url.rsplit('.').next().unwrap_or("png").to_lowercase();
+                let dir = data_dir().join("icons");
+                let path = dir.join(format!("{appid}.{ext}"));
+                if std::fs::create_dir_all(&dir).is_ok() && std::fs::write(&path, b).is_ok() {
+                    icon = Some(path.to_string_lossy().to_string());
                 }
             }
         }
     }
-    Art { assets }
+    Art { assets, icon }
 }

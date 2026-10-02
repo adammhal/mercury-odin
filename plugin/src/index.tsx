@@ -71,6 +71,27 @@ function startWatcher() {
     }
     localStorage.setItem("mercury.removedAnnounced", JSON.stringify([...announced]));
   };
+  // Once a day, look for newer releases of installed games and say so once per version.
+  const checkUpdates = async () => {
+    const last = Number(localStorage.getItem("mercury.updatesCheckedAt") ?? 0);
+    if (Date.now() - last < 24 * 3600 * 1000) return;
+    localStorage.setItem("mercury.updatesCheckedAt", String(Date.now()));
+    const told: Record<string, string> = JSON.parse(localStorage.getItem("mercury.updatesAnnounced") ?? "{}");
+    let lib;
+    try { lib = await api.library(); } catch { return; }
+    for (const e of lib) {
+      try {
+        const u = await api.updateCheck(e.appid);
+        const v = u.newer?.version;
+        if (!v || told[e.appid] === v) continue;
+        told[e.appid] = v;
+        toaster.toast({ title: "Mercury", body: `Update available for ${e.name}: ${v}`, onClick: () => Navigation.Navigate(`/mercury/game/${e.appid}`) } as any);
+      } catch { /* engine busy or source down; try tomorrow */ }
+    }
+    localStorage.setItem("mercury.updatesAnnounced", JSON.stringify(told));
+  };
+  setTimeout(checkUpdates, 60000);
+  const daily = setInterval(checkUpdates, 3600 * 1000);
   const timer = setInterval(() => { tick(); checkBrowserDownload(); tickStoreButton(); checkRemoved(); }, 2000);
   // When a repack installer closes, look for the installed game and add it.
   const stopExit = onAppExit(async (appid) => {
@@ -79,7 +100,7 @@ function startWatcher() {
     try { await api.act(j.id, "setup-done"); }
     catch (e: any) { toaster.toast({ title: "Mercury", body: e.message }); }
   });
-  return () => { clearInterval(timer); stopExit(); stopStoreButton(); };
+  return () => { clearInterval(timer); clearInterval(daily); stopExit(); stopStoreButton(); };
 }
 
 export default definePlugin(() => {

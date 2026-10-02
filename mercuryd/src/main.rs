@@ -55,6 +55,7 @@ async fn put_config(State(a): State<App>, Json(mut v): Json<Value>) -> R {
     let mut c = cfg(&a);
     // An empty key from the UI means "unchanged"; the UI never sees the stored key.
     if v["rd_key"].as_str().is_none_or(|k| k.is_empty()) { v["rd_key"] = json!(c.rd_key); }
+    if v["sgdb_key"].as_str().is_none_or(|k| k.is_empty()) { v["sgdb_key"] = json!(c.sgdb_key); }
     let mut merged = serde_json::to_value(&c)?;
     if let (Some(m), Some(n)) = (merged.as_object_mut(), v.as_object()) {
         for (k, val) in n { if m.contains_key(k) { m.insert(k.clone(), val.clone()); } }
@@ -77,7 +78,7 @@ struct Q { q: String }
 async fn search(State(a): State<App>, Query(q): Query<Q>) -> R { Ok(Json(json!(steam::search(&a.m.http, &q.q).await?))) }
 
 async fn app(State(a): State<App>, Path(id): Path<u32>) -> R { Ok(Json(json!(steam::details(&a.m.http, id).await?))) }
-async fn art(State(a): State<App>, Path(id): Path<u32>) -> R { Ok(Json(json!(steam::art(&a.m.http, id).await))) }
+async fn art(State(a): State<App>, Path(id): Path<u32>) -> R { Ok(Json(json!(steam::art(&a.m.http, id, &cfg(&a).sgdb_key).await))) }
 
 #[derive(Deserialize)]
 struct SrcQ { name: String, #[serde(default)] refresh: bool }

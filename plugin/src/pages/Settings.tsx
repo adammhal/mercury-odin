@@ -16,6 +16,7 @@ const PROTONS = [
 export function Settings() {
   const [cfg, setCfg] = useState<Config>();
   const [key, setKey] = useState("");
+  const [sgdbKey, setSgdbKey] = useState("");
   const [status, , reloadStatus] = usePoll(api.status, 0);
   useEffect(() => { api.config().then(setCfg, () => {}); }, []);
 
@@ -40,6 +41,14 @@ export function Settings() {
           <Focusable flow-children="horizontal" style={{ display: "flex", gap: 10, margin: "8px 0 4px" }}>
             <Btn style={{ width: 180 }} disabled={!key} onClick={async () => { await save({ rd_key: key }); setKey(""); }}>Save key</Btn>
             <Btn style={{ width: 180 }} disabled={!cfg.rd_key_set} onClick={check}>Test key</Btn>
+          </Focusable>
+        </PanelSection>
+        <PanelSection title="SteamGridDB (optional)">
+          <Field label="API key" description={cfg.sgdb_key_set ? "A key is saved. Mercury uses SteamGridDB for art Steam lacks, and for game icons." : "Not set. Get one at steamgriddb.com, under Preferences then API. Without it, Mercury uses Steam's art only."} childrenLayout="below">
+            <TextField bIsPassword value={sgdbKey} onChange={(e) => setSgdbKey(e.target.value)} />
+          </Field>
+          <Focusable flow-children="horizontal" style={{ display: "flex", gap: 10, margin: "8px 0 4px" }}>
+            <Btn style={{ width: 180 }} disabled={!sgdbKey} onClick={async () => { await save({ sgdb_key: sgdbKey }); setSgdbKey(""); }}>Save key</Btn>
           </Focusable>
         </PanelSection>
         <PanelSection title="Games">

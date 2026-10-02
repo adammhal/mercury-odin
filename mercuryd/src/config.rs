@@ -6,6 +6,8 @@ use std::{fs, os::unix::fs::PermissionsExt, path::PathBuf};
 #[serde(default)]
 pub struct Config {
     pub rd_key: String,
+    /// SteamGridDB API key (steamgriddb.com/profile/preferences/api). Optional: fills art Steam's CDN lacks.
+    pub sgdb_key: String,
     pub games_dir: PathBuf,
     pub downloads_dir: PathBuf,
     pub server_url: String,
@@ -22,6 +24,7 @@ impl Default for Config {
         let home = home();
         Self {
             rd_key: String::new(),
+            sgdb_key: String::new(),
             games_dir: home.join("Games/Mercury"),
             downloads_dir: home.join("Games/Mercury/.downloads"),
             server_url: "https://mercury-server-production.up.railway.app".into(),
@@ -68,6 +71,8 @@ impl Config {
         let mut v = serde_json::to_value(self).unwrap_or_default();
         v["rd_key"] = serde_json::Value::String(String::new());
         v["rd_key_set"] = serde_json::Value::Bool(!self.rd_key.is_empty());
+        v["sgdb_key"] = serde_json::Value::String(String::new());
+        v["sgdb_key_set"] = serde_json::Value::Bool(!self.sgdb_key.is_empty());
         v
     }
 }
