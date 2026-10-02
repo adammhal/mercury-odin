@@ -29,5 +29,6 @@ if [ "$WHAT" = plugin ] || [ "$WHAT" = all ]; then
     mv -f $T/bin/mercuryd.new $T/bin/mercuryd
     echo installed to $T
     # The copies above trigger Decky reloads (and engine restarts); wait until the new engine answers.
-    for i in $(seq 1 30); do sleep 1; curl -s -m 2 127.0.0.1:47800/status >/dev/null && { echo "engine up after ${i}s"; break; }; done'
+    # Several copies can each trigger a reload, so require the engine to answer five checks in a row.
+    ok=0; for i in $(seq 1 45); do sleep 1; if curl -s -m 2 127.0.0.1:47800/status >/dev/null; then ok=$((ok+1)); else ok=0; fi; [ $ok -ge 5 ] && { echo "engine up and steady after ${i}s"; break; }; done'
 fi
