@@ -9,7 +9,15 @@ Proton. Runs only on the AYN Odin 2 Portal under Armada OS, inside Steam Game Mo
 |---|---|
 | `mercuryd/` | Native aarch64 Rust engine. HTTP API on `127.0.0.1:47800`. Sources, Real-Debrid, downloads, extraction, library. |
 | `plugin/` | Decky plugin. React UI in Steam, Python backend that starts and stops `mercuryd`. Steam writes happen here. |
+| `scripts/set-rd-key.sh` | Sends the Real-Debrid key from the Mac clipboard to the Odin. |
 | `deploy.sh` | Syncs to the Odin, builds there in the `lsfg-vk-build` distrobox, installs into `~/homebrew/plugins/mercury`. |
+
+## Setting the Real-Debrid key
+
+Copy the token from real-debrid.com/apitoken on the Mac, then run `scripts/set-rd-key.sh`. It reads the
+clipboard, clears it, checks the token with Real-Debrid from the Odin, and saves it in Mercury only if it
+works. The token goes over SSH stdin, so it never appears in a command line, shell history or a file on the
+Mac. You can also type it in Mercury > Settings on the device.
 
 ## How a game gets installed
 
