@@ -66,6 +66,12 @@ pub struct Entry {
     #[serde(default)] pub installer_dir: Option<PathBuf>,
     /// Release name of the source it came from, for update checks.
     #[serde(default)] pub source_name: Option<String>,
+    /// When the source last changed the release it was installed from (SteamRIP's uploadDate), for update checks.
+    #[serde(default)] pub source_updated: Option<String>,
+    /// Set after Mercury moved the game: the plugin must point the Steam shortcut at the new exe, then clear it.
+    #[serde(default)] pub needs_repoint: bool,
+    /// Destination while a move is running.
+    #[serde(default)] pub moving_to: Option<PathBuf>,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -256,7 +262,7 @@ impl Manager {
     /// Add a game folder that is already installed somewhere else.
     pub fn enqueue_import(&self, appid: u32, name: String, dir: PathBuf, keep_in_place: bool) -> Result<Job> {
         let source = Source { name: dir.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(), provider: "Imported".into(),
-            size: String::new(), size_bytes: 0, magnet: None, url: None, version: None, urls: vec![], supported: true, repack: false, declared: false };
+            size: String::new(), size_bytes: 0, magnet: None, url: None, version: None, urls: vec![], supported: true, repack: false, declared: false, updated: None };
         self.enqueue_with(appid, name, source, vec![], false, |j| { j.import_dir = Some(dir); j.keep_in_place = keep_in_place })
     }
 
@@ -280,7 +286,7 @@ impl Manager {
         let entry = Entry { appid: job.appid, name: job.name.clone(), size: storage::dir_size(&dir), dir, exe: exe.clone(), shortcut_id,
             provider: job.source.provider.clone(), version, installed: now(),
             installer_dir: if repack { job.dir.clone() } else { old.and_then(|e| e.installer_dir) },
-            source_name: Some(job.source.name.clone()) };
+            source_name: Some(job.source.name.clone()), source_updated: job.source.updated.clone(), needs_repoint: false, moving_to: None };
         {
             let mut s = self.saved.lock().unwrap();
             s.library.retain(|e| e.appid != job.appid);
@@ -372,6 +378,50 @@ impl Manager {
         s.library.push(e.clone());
         self.save(&s);
         Ok(e)
+    }
+
+    /// Move an installed game's folder to `root` (internal storage or a microSD card). Runs in the background;
+    /// when done the entry points at the new place and `needs_repoint` asks the plugin to update the shortcut.
+    pub fn start_move(self: &Arc<Self>, appid: u32, root: PathBuf) -> Result<Entry> {
+        let e = {
+            let mut s = self.saved.lock().unwrap();
+            let e = s.library.iter_mut().find(|e| e.appid == appid).ok_or_else(|| anyhow!("not installed"))?;
+            if e.moving_to.is_some() { bail!("{} is already moving", e.name); }
+            let to = root.join(e.dir.file_name().map(|n| n.to_owned()).unwrap_or_else(|| slug(&e.name).into()));
+            if to == e.dir { bail!("{} is already there", e.name); }
+            if to.exists() { bail!("{} already exists", to.display()); }
+            e.moving_to = Some(to);
+            let out = e.clone();
+            self.save(&s);
+            out
+        };
+        let m = self.clone();
+        let (from, to) = (e.dir.clone(), e.moving_to.clone().unwrap());
+        tokio::task::spawn_blocking(move || {
+            let res = crate::import::move_dir(&from, &to);
+            let mut s = m.saved.lock().unwrap();
+            if let Some(x) = s.library.iter_mut().find(|x| x.appid == appid) {
+                x.moving_to = None;
+                match res {
+                    Ok(()) => {
+                        let rel = x.exe.strip_prefix(&x.dir).map(|r| r.to_path_buf()).unwrap_or_default();
+                        tracing::info!("moved {} to {}", x.name, to.display());
+                        x.exe = to.join(rel);
+                        x.dir = to;
+                        x.needs_repoint = true;
+                    }
+                    Err(err) => tracing::warn!("moving {} failed: {err:#}", x.name),
+                }
+            }
+            m.save(&s);
+        });
+        Ok(e)
+    }
+
+    pub fn repointed(&self, appid: u32) {
+        let mut s = self.saved.lock().unwrap();
+        if let Some(e) = s.library.iter_mut().find(|e| e.appid == appid) { e.needs_repoint = false; }
+        self.save(&s);
     }
 
     /// The game's Steam shortcut was re-created (after the user removed it in Steam).

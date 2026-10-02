@@ -1,6 +1,8 @@
 import { staticClasses } from "@decky/ui";
 import { definePlugin, routerHook, toaster } from "@decky/api";
 import type { FC } from "react";
+
+declare const SteamClient: any;
 import { FaMeteor } from "react-icons/fa";
 import { api, Job } from "./api";
 import { Panel } from "./Panel";
@@ -56,16 +58,25 @@ function startWatcher() {
   const announced = new Set<number>(JSON.parse(localStorage.getItem("mercury.removedAnnounced") ?? "[]"));
   let n = 0;
   const checkRemoved = async () => {
-    if (++n % 15) return;
+    if (++n % 3) return;
     let lib;
     try { lib = await api.library(); } catch { return; }
+    for (const e of lib.filter((x) => x.needs_repoint)) {
+      // Mercury moved the game; point the same shortcut (same Proton prefix, same saves) at the new place.
+      try {
+        await SteamClient.Apps.SetShortcutExe(e.shortcut_id, `"${e.exe}"`);
+        await SteamClient.Apps.SetShortcutStartDir(e.shortcut_id, e.exe.slice(0, e.exe.lastIndexOf("/") + 1));
+        await api.repointed(e.appid);
+        toaster.toast({ title: "Mercury", body: `${e.name} moved` });
+      } catch (err: any) { console.log("[Mercury] repoint failed", e.name, err?.message); }
+    }
     for (const e of lib) {
       const exists = shortcutExists(e.shortcut_id);
       if (exists !== false) { missingSince.delete(e.appid); announced.delete(e.appid); continue; }
       const first = missingSince.get(e.appid) ?? Date.now();
       missingSince.set(e.appid, first);
-      // Two checks in a row (30 s apart) before believing it, and one notification per removal.
-      if (Date.now() - first < 25000 || announced.has(e.appid)) continue;
+      // Missing for 30 s (several checks) before believing it, and one notification per removal.
+      if (Date.now() - first < 30000 || announced.has(e.appid)) continue;
       announced.add(e.appid);
       toaster.toast({ title: "Mercury", body: `${e.name} was removed from Steam. Its files are still installed. Tap to clean up.`,
         onClick: () => Navigation.Navigate("/mercury/library") } as any);

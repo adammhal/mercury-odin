@@ -1,7 +1,7 @@
 import { ButtonItem, Dropdown, Field, Focusable, PanelSection, TextField, ToggleField } from "@decky/ui";
 import { toaster } from "@decky/api";
 import { useEffect, useState } from "react";
-import { api, bytes, Config } from "../api";
+import { api, bytes, Config, Location } from "../api";
 import { usePoll } from "../hooks";
 import { Btn, C, FocusStyle, page } from "../ui";
 
@@ -18,6 +18,7 @@ export function Settings() {
   const [key, setKey] = useState("");
   const [sgdbKey, setSgdbKey] = useState("");
   const [status, , reloadStatus] = usePoll(api.status, 0);
+  const [locs, , reloadLocs] = usePoll(api.locations, 0);
   useEffect(() => { api.config().then(setCfg, () => {}); }, []);
 
   const save = async (patch: Partial<Config>) => {
@@ -55,7 +56,10 @@ export function Settings() {
           <Field label="Proton for new games" childrenLayout="below">
             <Dropdown rgOptions={PROTONS} selectedOption={cfg.proton_tool} onChange={(o) => save({ proton_tool: o.data })} />
           </Field>
-          <Field label="Install folder" description={cfg.games_dir} />
+          <Field label="Install new games on" description={`${cfg.games_dir}. Mount a Windows-formatted microSD card from Library, Import first.`} childrenLayout="below">
+            <Dropdown rgOptions={(locs ?? []).map((l: Location) => ({ data: l.path, label: `${l.label} · ${bytes(l.free)} free` }))}
+              selectedOption={cfg.games_dir} onChange={async (o) => { await save({ games_dir: o.data }); reloadLocs(); }} />
+          </Field>
           <Field label="Launch options for new games" description={cfg.launch_options || "None"} />
           <ToggleField label="Search SteamRIP" description="Pre-installed games from the SteamRIP feed" checked={cfg.enable_steamrip} onChange={(v) => save({ enable_steamrip: v })} />
         </PanelSection>

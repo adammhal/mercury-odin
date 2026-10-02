@@ -7,6 +7,7 @@ mod import;
 mod install;
 mod jobs;
 mod rd;
+mod shortcuts;
 mod sources;
 mod steam;
 mod storage;
@@ -17,6 +18,24 @@ use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
 
 pub const PORT: u16 = 47800;
+
+/// "2026-10-02T14:05:00" from Unix seconds (UTC), comparable as a string with the feeds' ISO dates.
+fn iso_from_unix(t: u64) -> String {
+    let days = (t / 86400) as i64;
+    let secs = t % 86400;
+    // Civil-from-days (Howard Hinnant's algorithm).
+    let z = days + 719468;
+    let era = z.div_euclid(146097);
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}", secs / 3600, secs % 3600 / 60, secs % 60)
+}
 
 #[derive(Clone)]
 struct App { m: Arc<jobs::Manager> }
@@ -166,6 +185,15 @@ async fn update_check(State(a): State<App>, Path(appid): Path<u32>) -> R {
             .max_by(|(a, _), (b, _)| sources::version_key(a).cmp(&sources::version_key(b)))
             .map(|(v, s)| json!({ "version": v, "source": s }))
     });
+    // SteamRIP often has no comparable version; a release it changed after this install counts as an update.
+    let newest = newest.or_else(|| {
+        if e.provider != "SteamRIP" { return None; }
+        let since = e.source_updated.clone().unwrap_or_else(|| iso_from_unix(e.installed));
+        list.iter().filter(|s| s.provider == "SteamRIP" && s.supported_or_browser())
+            .filter(|s| s.updated.as_deref().is_some_and(|u| u > since.as_str()))
+            .max_by(|a, b| a.updated.cmp(&b.updated))
+            .map(|s| json!({ "version": format!("updated {}", &s.updated.as_deref().unwrap_or("")[..10.min(s.updated.as_deref().unwrap_or("").len())]), "source": s }))
+    });
     let v = json!({ "current": current, "provider": e.provider, "newer": newest });
     SEEN.lock().unwrap().get_or_insert_with(HashMap::new).insert(appid, (std::time::Instant::now(), v.clone()));
     Ok(Json(v))
@@ -194,19 +222,63 @@ async fn import_game(State(a): State<App>, Json(b): Json<ImportBody>) -> R {
         Ok(Json(json!(a.m.enqueue_import(b.appid, b.name, b.path, b.keep_in_place)?)))
     } else {
         let src = sources::Source { name: b.path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(), provider: "Imported".into(),
-            size: String::new(), size_bytes: 0, magnet: None, url: None, version: None, urls: vec![], supported: true, repack: false, declared: false };
+            size: String::new(), size_bytes: 0, magnet: None, url: None, version: None, urls: vec![], supported: true, repack: false, declared: false, updated: None };
         Ok(Json(json!(a.m.enqueue(b.appid, b.name, src, browser::with_siblings(&b.path), false)?)))
     }
 }
 
 async fn library(State(a): State<App>) -> R { Ok(Json(json!(a.m.library()))) }
 
+/// Places a game can live: internal storage plus any mounted microSD card.
+fn locations(c: &config::Config) -> Vec<(String, std::path::PathBuf)> {
+    let internal = config::home().join("Games/Mercury");
+    let mut out = vec![("Internal storage".to_string(), internal.clone())];
+    if c.games_dir != internal && !c.games_dir.starts_with("/run/media") { out.push(("Custom".into(), c.games_dir.clone())); }
+    for (label, root) in import::roots() {
+        if label == "microSD" { out.push((format!("microSD ({})", root.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default()), root.join("Mercury"))); }
+    }
+    out
+}
+
+async fn list_locations(State(a): State<App>) -> R {
+    let c = cfg(&a);
+    let v: Vec<Value> = locations(&c).into_iter().map(|(label, path)| {
+        let st = storage::of(&path);
+        json!({ "label": label, "path": path, "free": st.free, "total": st.total, "default": path == c.games_dir })
+    }).collect();
+    Ok(Json(json!(v)))
+}
+
+#[derive(Deserialize)]
+struct MoveBody { to: std::path::PathBuf }
+async fn move_game(State(a): State<App>, Path(appid): Path<u32>, Json(b): Json<MoveBody>) -> R {
+    let c = cfg(&a);
+    if !locations(&c).iter().any(|(_, p)| p == &b.to) { return Err(anyhow::anyhow!("{} is not an install location", b.to.display()).into()); }
+    std::fs::create_dir_all(&b.to)?;
+    Ok(Json(json!(a.m.start_move(appid, b.to)?)))
+}
+
+async fn repointed(State(a): State<App>, Path(appid): Path<u32>) -> R { a.m.repointed(appid); Ok(Json(json!({ "ok": true }))) }
+
+/// The user's non-Steam shortcuts that Mercury does not manage yet (candidates for adopting).
+async fn steam_shortcuts(State(a): State<App>) -> R {
+    let lib = a.m.library();
+    let jobs = a.m.jobs();
+    let browser = cfg(&a).browser_shortcut_id;
+    let list: Vec<shortcuts::Shortcut> = shortcuts::list().into_iter().filter(|s| {
+        !lib.iter().any(|e| e.shortcut_id == s.appid) && !jobs.iter().any(|j| j.shortcut_id == Some(s.appid))
+            && Some(s.appid) != browser && s.exe.to_lowercase().ends_with(".exe")
+    }).collect();
+    Ok(Json(json!(list)))
+}
+
 #[derive(Deserialize)]
 struct AdoptBody { appid: u32, name: String, dir: std::path::PathBuf, exe: std::path::PathBuf, shortcut_id: u32, #[serde(default)] provider: Option<String>, #[serde(default)] version: Option<String> }
 async fn adopt(State(a): State<App>, Json(b): Json<AdoptBody>) -> R {
     if !b.exe.starts_with(&b.dir) { return Err(anyhow::anyhow!("exe must be inside dir").into()); }
     let e = jobs::Entry { appid: b.appid, name: b.name, dir: b.dir, exe: b.exe, shortcut_id: b.shortcut_id,
-        provider: b.provider.unwrap_or_else(|| "Added by hand".into()), size: 0, version: b.version, installed: 0, installer_dir: None, source_name: None };
+        provider: b.provider.unwrap_or_else(|| "Added by hand".into()), size: 0, version: b.version, installed: 0, installer_dir: None, source_name: None,
+        source_updated: None, needs_repoint: false, moving_to: None };
     tracing::info!("adopt: {} ({}) shortcut {}", e.name, e.appid, e.shortcut_id);
     Ok(Json(json!(a.m.adopt(e)?)))
 }
@@ -245,6 +317,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/jobs/{id}/{act}", post(job_action))
         .route("/library", get(library))
         .route("/library/adopt", post(adopt))
+        .route("/library/{appid}/move", post(move_game))
+        .route("/library/{appid}/repointed", post(repointed))
+        .route("/locations", get(list_locations))
+        .route("/steam/shortcuts", get(steam_shortcuts))
         .route("/import", get(import_candidates).post(import_game))
         .route("/import/mount", post(mount_card))
         .route("/library/{appid}/uninstall", post(uninstall))

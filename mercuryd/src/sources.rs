@@ -28,12 +28,20 @@ pub struct Source {
     /// True for repacks that need their own installer (see `is_repack`).
     #[serde(default)]
     pub repack: bool,
+    /// When the source last changed this release (SteamRIP's uploadDate, ISO 8601).
+    #[serde(default)]
+    pub updated: Option<String>,
     /// The source said whether it is an installer, so `repack` is not a guess from the title.
     #[serde(default, skip_serializing)]
     pub declared: bool,
 }
 
 fn yes() -> bool { true }
+
+impl Source {
+    /// SteamRIP sources are installable either through Real-Debrid or as a browser download.
+    pub fn supported_or_browser(&self) -> bool { self.supported || self.url.is_some() }
+}
 
 /// Repacks ship a 32-bit setup.exe that must decompress the game. On the Odin (FEX WoW64) FitGirl's
 /// unpacker spins at 0.3% (2026-10-02), so these rank below sources that ship the game ready to run.
@@ -76,6 +84,8 @@ struct RipItem {
     #[serde(default)]
     uris: Vec<String>,
     version: Option<String>,
+    #[serde(default, rename = "uploadDate")]
+    upload_date: Option<String>,
 }
 
 static RIP_CACHE: Mutex<Option<(Instant, Vec<RipItem>)>> = Mutex::new(None);
@@ -235,6 +245,7 @@ pub async fn search(http: &reqwest::Client, cfg: &Config, name: &str, refresh: b
                     supported: true,
                     repack: declared.as_deref() == Some("installer"),
                     declared: declared.as_deref().is_some_and(|d| d != "unknown"),
+                    updated: None,
                 }));
             }
         }
@@ -261,6 +272,7 @@ pub async fn search(http: &reqwest::Client, cfg: &Config, name: &str, refresh: b
                 supported,
                 repack: false,
                 declared: false,
+                updated: r.upload_date.clone(),
             }));
         }
     }

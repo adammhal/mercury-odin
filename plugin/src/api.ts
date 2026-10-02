@@ -15,7 +15,10 @@ export type ImportCandidate = { path: string; name: string; location: string; ki
 export type UpdateInfo = { current?: string | null; provider: string; newer?: { version: string; source: Source } | null };
 export type Availability = "cached" | "not_cached" | "blocked" | "unknown";
 export type LocalFile = { path: string; name: string; size: number; modified: number; finished: boolean; archive: boolean };
-export type Entry = { appid: number; name: string; dir: string; exe: string; shortcut_id: number; provider: string; size: number; version?: string | null; installed: number; source_name?: string | null };
+export type Entry = { appid: number; name: string; dir: string; exe: string; shortcut_id: number; provider: string; size: number; version?: string | null;
+  installed: number; source_name?: string | null; needs_repoint?: boolean; moving_to?: string | null };
+export type Location = { label: string; path: string; free: number; total: number; default: boolean };
+export type SteamShortcut = { appid: number; name: string; exe: string; start_dir: string; launch_options: string };
 export type Status = { version: string; rd_key_set: boolean; unrar: boolean; installer_launch_options?: string | null; storage: { total: number; free: number; mercury: number } };
 export type Config = { browser_shortcut_id?: number | null; sgdb_key?: string; sgdb_key_set?: boolean; rd_key: string; rd_key_set: boolean; games_dir: string; downloads_dir: string; server_url: string; enable_steamrip: boolean; proton_tool: string; launch_options: string };
 
@@ -66,6 +69,11 @@ export const api = {
   mountCard: (device: string) => req<{ message: string }>("/import/mount", "POST", { device }),
   importGame: (path: string, appid: number, name: string, keep_in_place: boolean) => req<Job>("/import", "POST", { path, appid, name, keep_in_place }),
   uninstall: (appid: number) => req<Entry>(`/library/${appid}/uninstall`, "POST", {}),
+  locations: () => req<Location[]>("/locations"),
+  moveGame: (appid: number, to: string) => req<Entry>(`/library/${appid}/move`, "POST", { to }),
+  repointed: (appid: number) => req<unknown>(`/library/${appid}/repointed`, "POST", {}),
+  steamShortcuts: () => req<SteamShortcut[]>("/steam/shortcuts"),
+  adopt: (b: { appid: number; name: string; dir: string; exe: string; shortcut_id: number; provider?: string }) => req<Entry>("/library/adopt", "POST", b),
   setShortcut: (appid: number, shortcut_id: number) => req<Entry>(`/library/${appid}/shortcut`, "POST", { shortcut_id }),
   installerFiles: (appid: number) => req<{ dir: string; size: number } | null>(`/library/${appid}/installer-files`),
   deleteInstallerFiles: (appid: number) => req<{ freed: number }>(`/library/${appid}/installer-files`, "DELETE"),

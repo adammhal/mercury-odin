@@ -1,6 +1,6 @@
 import { Focusable, Navigation } from "@decky/ui";
 import { useEffect, useState } from "react";
-import { api, bytes, cdn, UpdateInfo } from "../api";
+import { api, bytes, cdn, Entry, Location, UpdateInfo } from "../api";
 import { usePoll } from "../hooks";
 import { gameId, readdToSteam, shortcutExists } from "../steam";
 import { ConfirmModal, showModal } from "@decky/ui";
@@ -9,8 +9,23 @@ import { Btn, C, FocusStyle, page, scrollIntoView } from "../ui";
 
 declare const SteamClient: any;
 
+function moveDialog(e: Entry, locs: Location[], done: () => void) {
+  const here = locs.find((l) => e.dir.startsWith(l.path + "/") || e.dir.startsWith(l.path));
+  const targets = locs.filter((l) => l !== here);
+  if (!targets.length) { toaster.toast({ title: "Mercury", body: "No other storage to move to. Insert or mount a microSD card." }); return; }
+  const t = targets[0];
+  showModal(<ConfirmModal strTitle={`Move ${e.name}?`} strOKButtonText={`Move to ${t.label}`}
+    strDescription={`From ${here?.label ?? e.dir} to ${t.label} (${bytes(t.free)} free). ${bytes(e.size)} to move. The Steam shortcut, saves and settings stay the same. A move to or from the card copies the files, which can take a while.`}
+    onOK={async () => {
+      try { await api.moveGame(e.appid, t.path); toaster.toast({ title: "Mercury", body: `Moving ${e.name}…` }); }
+      catch (err: any) { toaster.toast({ title: "Mercury", body: err.message }); }
+      done();
+    }} />);
+}
+
 export function Library() {
-  const [lib, , reload] = usePoll(api.library, 5000);
+  const [lib, , reload] = usePoll(api.library, 3000);
+  const [locs] = usePoll(api.locations, 0);
   const [updates, setUpdates] = useState<Record<number, UpdateInfo>>({});
   useEffect(() => {
     for (const e of lib ?? []) {
@@ -49,8 +64,11 @@ export function Library() {
                   strDescription={`Its Steam shortcut is already gone. This deletes the game files (${bytes(e.size)}) and its Proton prefix, which holds local saves.`}
                   onOK={async () => { await api.uninstall(e.appid); reload(); }} />)}>Delete files</Btn>
               </> : <>
-                <Btn style={{ width: 90 }} onClick={() => SteamClient.Apps.RunGame(gameId(e.shortcut_id), "", -1, 100)}>Play</Btn>
-                <Btn style={{ width: 90 }} onClick={() => Navigation.Navigate(`/mercury/game/${e.appid}`)}>Details</Btn>
+                {e.moving_to ? <span style={{ fontSize: 12, color: C.dim }}>Moving…</span> : <>
+                  <Btn style={{ width: 90 }} onClick={() => SteamClient.Apps.RunGame(gameId(e.shortcut_id), "", -1, 100)}>Play</Btn>
+                  <Btn style={{ width: 80 }} onClick={() => moveDialog(e, locs ?? [], reload)}>Move</Btn>
+                  <Btn style={{ width: 90 }} onClick={() => Navigation.Navigate(`/mercury/game/${e.appid}`)}>Details</Btn>
+                </>}
               </>}
             </Focusable>
           ))}

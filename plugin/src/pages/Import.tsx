@@ -1,7 +1,7 @@
 import { Focusable, Navigation, Spinner, TextField } from "@decky/ui";
 import { toaster } from "@decky/api";
 import { useEffect, useState } from "react";
-import { api, App, bytes, cdn, ImportCandidate } from "../api";
+import { api, App, bytes, cdn, ImportCandidate, SteamShortcut } from "../api";
 import { useOnce } from "../hooks";
 import { Btn, C, Chip, FOCUS, FocusStyle, page, scrollIntoView } from "../ui";
 
@@ -9,6 +9,44 @@ import { Btn, C, Chip, FOCUS, FocusStyle, page, scrollIntoView } from "../ui";
 function guessTitle(name: string) {
   return name.replace(/\.(zip|rar|7z)$/i, "").replace(/[._]/g, " ").replace(/[\[(].*?[\])]/g, " ")
     .replace(/\b(v?\d+(\.\d+)+|build \d+|repack|fitgirl|dodi|steamrip|gog|-[A-Z0-9]+$)\b/gi, " ").replace(/\s+/g, " ").trim();
+}
+
+/** Match an existing non-Steam shortcut to a Steam game and add it to Mercury's library without changing it. */
+function Adopt({ sc, onDone }: { sc: SteamShortcut; onDone: () => void }) {
+  const [q, setQ] = useState(guessTitle(sc.name));
+  const [res, setRes] = useState<App[]>();
+  const [match, setMatch] = useState<App>();
+  useEffect(() => {
+    if (q.trim().length < 2) return;
+    const t = setTimeout(() => api.search(q.trim()).then((r) => { setRes(r); setMatch((m) => m ?? r[0]); }, () => setRes([])), 400);
+    return () => clearTimeout(t);
+  }, [q]);
+  const go = async () => {
+    if (!match) return;
+    const dir = (sc.start_dir || sc.exe.slice(0, sc.exe.lastIndexOf("/"))).replace(/\/$/, "");
+    try {
+      await api.adopt({ appid: match.appid, name: match.name, dir, exe: sc.exe, shortcut_id: sc.appid });
+      toaster.toast({ title: "Mercury", body: `${match.name} is now in Mercury's library` });
+      Navigation.Navigate("/mercury/library");
+    } catch (e: any) { toaster.toast({ title: "Mercury", body: e.message }); }
+    onDone();
+  };
+  return (
+    <div>
+      <div style={{ fontSize: 13, color: C.dim, margin: "4px 0 8px" }}>Steam shortcut "{sc.name}" · {sc.exe}</div>
+      <TextField label="Which Steam game is this? (for update checks and Mercury's pages; the shortcut is not changed)" value={q} onChange={(e) => setQ(e.target.value)} />
+      <Focusable flow-children="horizontal" style={{ display: "flex", gap: 10, overflowX: "auto", padding: "10px 2px", scrollbarWidth: "none" }}>
+        {(res ?? []).slice(0, 10).map((a) => (
+          <Focusable key={a.appid} focusClassName={FOCUS} noFocusRing onFocus={scrollIntoView} onActivate={() => setMatch(a)} onClick={() => setMatch(a)}
+            style={{ flex: "none", width: 80, borderRadius: 4, outline: match?.appid === a.appid ? `2px solid ${C.ok}` : "none" }}>
+            <div style={{ height: 120, borderRadius: 4, background: `${C.panel} url(${cdn(a.appid, "library_600x900.jpg")}) center/cover` }} />
+            <div style={{ fontSize: 10, marginTop: 3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{a.name}</div>
+          </Focusable>
+        ))}
+      </Focusable>
+      <Btn disabled={!match} onClick={go} style={{ height: 34, background: "linear-gradient(90deg,#70d61d,#01a75b)" }}>{match ? `Add as ${match.name}` : "Pick the matching game"}</Btn>
+    </div>
+  );
 }
 
 function Pick({ c, onDone }: { c: ImportCandidate; onDone: () => void }) {
@@ -67,6 +105,8 @@ export function Import() {
   const [tick, setTick] = useState(0);
   const [data, err] = useOnce(api.importCandidates, [tick]);
   const [sel, setSel] = useState<ImportCandidate>();
+  const [shortcuts] = useOnce(api.steamShortcuts, [tick]);
+  const [adopting, setAdopting] = useState<SteamShortcut>();
   return (
     <div style={page}>
       <FocusStyle />
@@ -92,7 +132,7 @@ export function Import() {
         {!data && !err && <div style={{ display: "flex", gap: 8, color: C.dim }}><Spinner style={{ width: 18 }} />Looking for games…</div>}
         {err && <div style={{ color: C.bad }}>{err}</div>}
         {data && !data.candidates.length && <div style={{ color: C.dim }}>Nothing to import yet.</div>}
-        {sel ? <Pick c={sel} onDone={() => setSel(undefined)} /> : (
+        {adopting ? <Adopt sc={adopting} onDone={() => { setAdopting(undefined); setTick((n) => n + 1); }} /> : sel ? <Pick c={sel} onDone={() => setSel(undefined)} /> : (
           <Focusable flow-children="vertical">
             {(data?.candidates ?? []).map((c) => (
               <Focusable key={c.path} focusClassName={FOCUS} noFocusRing onFocus={scrollIntoView} onActivate={() => setSel(c)} onClick={() => setSel(c)}
@@ -105,6 +145,17 @@ export function Import() {
                   <Chip tone="accent">{c.location}</Chip>
                   {c.installer && <Chip tone="warn">Installer</Chip>}
                 </div>
+              </Focusable>
+            ))}
+            {!!shortcuts?.length && <div style={{ fontSize: 13, fontWeight: 600, color: "#fff", margin: "14px 0 6px" }}>Your other Steam shortcuts</div>}
+            {(shortcuts ?? []).map((sc) => (
+              <Focusable key={sc.appid} focusClassName={FOCUS} noFocusRing onFocus={scrollIntoView} onActivate={() => setAdopting(sc)} onClick={() => setAdopting(sc)}
+                style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", gap: 12, alignItems: "center", padding: "8px 12px", borderRadius: 5, marginBottom: 6, background: C.panel }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontWeight: 600, fontSize: 13 }}>{sc.name}</div>
+                  <div style={{ fontSize: 11, color: C.dim, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{sc.exe}</div>
+                </div>
+                <Chip>Add to Mercury</Chip>
               </Focusable>
             ))}
           </Focusable>
