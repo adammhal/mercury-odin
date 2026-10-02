@@ -10,16 +10,38 @@ import { fetchNoCors } from "@decky/api";
 const BINDING = "mercuryGet";
 const INJECT = `(() => {
   document.getElementById("mercury-get")?.remove();
+  clearInterval(window.__mercuryAlign);
   const m = location.href.match(/store\\.steampowered\\.com\\/app\\/(\\d+)/);
   if (!m) return "no app";
   const b = document.createElement("a");
   b.id = "mercury-get"; b.href = "#";
   b.textContent = "\\u2193  Get with Mercury";
-  b.style.cssText = "position:fixed;right:24px;top:96px;z-index:99999;padding:10px 18px;border-radius:4px;" +
-    "font:700 15px 'Motiva Sans',Arial,sans-serif;color:#fff;text-decoration:none;" +
+  b.style.cssText = "position:fixed;z-index:99999;display:flex;align-items:center;box-sizing:border-box;padding:0 18px;" +
+    "border-radius:12px;font:700 15px 'Motiva Sans',Arial,sans-serif;color:#fff;text-decoration:none;white-space:nowrap;" +
     "background:linear-gradient(90deg,#70d61d,#01a75b);box-shadow:0 4px 16px rgba(0,0,0,.5)";
   b.onclick = (e) => { e.preventDefault(); window.${BINDING}(m[1]); };
   document.body.appendChild(b);
+  // Sit beside protondb-decky's badge wherever the user placed it; bottom centre if there is none.
+  const align = () => {
+    const badge = document.getElementById("protondb-store-badge");
+    const r = badge && badge.getBoundingClientRect();
+    if (r && r.width) {
+      b.style.height = r.height + "px";
+      b.style.top = r.top + "px";
+      b.style.bottom = "";
+      const roomRight = innerWidth - r.right;
+      if (roomRight > b.offsetWidth + 20) { b.style.left = (r.right + 10) + "px"; }
+      else { b.style.left = (r.left - b.offsetWidth - 10) + "px"; }
+      b.style.transform = "";
+    } else {
+      b.style.height = "44px"; b.style.top = ""; b.style.bottom = "24px";
+      b.style.left = "50%"; b.style.transform = "translateX(-50%)";
+    }
+  };
+  align();
+  let n = 0;
+  window.__mercuryAlign = setInterval(() => { align(); if (++n > 20) clearInterval(window.__mercuryAlign); }, 500);
+  addEventListener("resize", align);
   return "button " + m[1];
 })()`;
 
