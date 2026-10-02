@@ -36,7 +36,9 @@ fn yes() -> bool { true }
 pub fn is_repack(provider: &str, name: &str) -> bool {
     let p = provider.to_lowercase();
     let n = name.to_lowercase();
+    // GOG offline installers are 32-bit Inno Setup too, so they hit the same problem.
     ["fitgirl", "dodi", "kaos", "elamigos", "xatab", "masquerade"].iter().any(|r| p.contains(r) || n.contains(&format!("{r} repack")) || n.contains(&format!("[{r}")))
+        || n.contains("repack") || n.contains("gog")
 }
 
 #[derive(Deserialize)]
@@ -135,9 +137,9 @@ pub fn similarity(query: &str, candidate: &str) -> f64 {
     0.8 * recall + 0.2 * precision.min(1.0)
 }
 
-async fn steamrip(http: &reqwest::Client, cfg: &Config) -> Vec<RipItem> {
+async fn steamrip(http: &reqwest::Client, cfg: &Config, refresh: bool) -> Vec<RipItem> {
     if let Some((t, v)) = RIP_CACHE.lock().unwrap().as_ref() {
-        if t.elapsed() < Duration::from_secs(6 * 3600) {
+        if !refresh && t.elapsed() < Duration::from_secs(6 * 3600) {
             return v.clone();
         }
     }
@@ -153,8 +155,9 @@ async fn steamrip(http: &reqwest::Client, cfg: &Config) -> Vec<RipItem> {
     }
 }
 
-async fn server(http: &reqwest::Client, cfg: &Config, name: &str) -> anyhow::Result<Vec<ServerItem>> {
-    let url = format!("{}/api/games/search?query={}", cfg.server_url, urlencoding::encode(name));
+async fn server(http: &reqwest::Client, cfg: &Config, name: &str, refresh: bool) -> anyhow::Result<Vec<ServerItem>> {
+    let mut url = format!("{}/api/games/search?query={}", cfg.server_url, urlencoding::encode(name));
+    if refresh { url.push_str("&force_refresh=true"); }
     // The Railway server sleeps when idle; the first request can 502 while it wakes.
     for attempt in 0..4 {
         match http.get(&url).timeout(Duration::from_secs(45)).send().await {
@@ -170,10 +173,11 @@ async fn server(http: &reqwest::Client, cfg: &Config, name: &str) -> anyhow::Res
     anyhow::bail!("Mercury server did not respond")
 }
 
-pub async fn search(http: &reqwest::Client, cfg: &Config, name: &str) -> (Vec<Source>, Vec<String>) {
+/// `refresh` bypasses the server's Redis cache and Mercury's 6-hour SteamRIP feed cache.
+pub async fn search(http: &reqwest::Client, cfg: &Config, name: &str, refresh: bool) -> (Vec<Source>, Vec<String>) {
     let mut errors = vec![];
-    let (srv, rip) = tokio::join!(server(http, cfg, name), async {
-        if cfg.enable_steamrip { steamrip(http, cfg).await } else { vec![] }
+    let (srv, rip) = tokio::join!(server(http, cfg, name, refresh), async {
+        if cfg.enable_steamrip { steamrip(http, cfg, refresh).await } else { vec![] }
     });
     let mut out: Vec<(f64, Source)> = vec![];
     match srv {
@@ -243,6 +247,8 @@ mod tests {
         assert!(is_repack("TorrentGames", "Elden Ring [DODI Repack]"));
         assert!(!is_repack("SteamRIP", "Skate Story Free Download"));
         assert!(!is_repack("OnlineFix", "Hollow Knight Silksong Online"));
+        assert!(is_repack("TorrentGames", "Firewatch [v 1.09] (2016) PC | RePack by R.G. Catalyst"));
+        assert!(is_repack("TorrentGames", "Firewatch [v 1.09] (2016) PC | Лицензия GOG"));
     }
     #[test]
     fn titles() {

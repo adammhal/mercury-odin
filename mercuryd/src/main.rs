@@ -1,4 +1,5 @@
 mod browser;
+mod cache;
 mod config;
 mod download;
 mod extract;
@@ -79,16 +80,25 @@ async fn app(State(a): State<App>, Path(id): Path<u32>) -> R { Ok(Json(json!(ste
 async fn art(State(a): State<App>, Path(id): Path<u32>) -> R { Ok(Json(json!(steam::art(&a.m.http, id).await))) }
 
 #[derive(Deserialize)]
-struct SrcQ { name: String }
+struct SrcQ { name: String, #[serde(default)] refresh: bool }
 async fn sources(State(a): State<App>, Query(q): Query<SrcQ>) -> R {
     let c = cfg(&a);
-    let (list, errors) = sources::search(&a.m.http, &c, &q.name).await;
+    let (list, errors) = sources::search(&a.m.http, &c, &q.name, q.refresh).await;
     // Repacks are heavily compressed; SteamRIP and OnlineFix ship the game nearly as-is.
     let est: Vec<u64> = list.iter().map(|s| match s.provider.as_str() {
         "SteamRIP" | "OnlineFix" => s.size_bytes + s.size_bytes / 7,
         _ => storage::estimate_installed(s.size_bytes),
     }).collect();
     Ok(Json(json!({ "sources": list, "installed_estimate": est, "errors": errors })))
+}
+
+#[derive(Deserialize)]
+struct Magnets { magnets: Vec<String> }
+async fn rd_cached(State(a): State<App>, Json(b): Json<Magnets>) -> R {
+    let rd = rd::Rd::new(a.m.http.clone(), &cfg(&a).rd_key)?;
+    // Each probe briefly adds the torrent to the user's Real-Debrid account, so keep the batch small.
+    let magnets: Vec<String> = b.magnets.into_iter().take(6).collect();
+    Ok(Json(json!(cache::check(&rd, magnets).await)))
 }
 
 async fn list_jobs(State(a): State<App>) -> R { Ok(Json(json!(a.m.jobs()))) }
@@ -126,6 +136,7 @@ async fn job_action(State(a): State<App>, Path((id, act)): Path<(u64, String)>, 
         "remove" => a.m.remove(id).await?,
         "setup-launched" => a.m.setup_launched(id, b.shortcut_id.ok_or_else(|| anyhow::anyhow!("shortcut_id required"))?),
         "setup-done" => return Ok(Json(json!(a.m.setup_done(id)?))),
+        "shortcut-created" => a.m.shortcut_created(id, b.shortcut_id.ok_or_else(|| anyhow::anyhow!("shortcut_id required"))?),
         "steam-added" => a.m.steam_added(id, b.shortcut_id.ok_or_else(|| anyhow::anyhow!("shortcut_id required"))?, b.exe)?,
         _ => return Err(anyhow::anyhow!("unknown action {act}").into()),
     }
@@ -157,6 +168,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/steam/app/{id}", get(app))
         .route("/steam/art/{id}", get(art))
         .route("/sources", get(sources))
+        .route("/sources/cached", post(rd_cached))
         .route("/jobs", get(list_jobs).post(new_job))
         .route("/browser/downloads", get(browser_downloads))
         .route("/jobs/clear", post(clear_jobs))

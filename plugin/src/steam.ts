@@ -1,4 +1,7 @@
-import { api, Job } from "./api";
+import { api, Job, withTimeout } from "./api";
+
+const log = (...a: unknown[]) => console.log("[Mercury] add to Steam:", ...a);
+const step = <T,>(what: string, p: Promise<T> | T) => withTimeout(Promise.resolve(p), 15000, what);
 
 declare const SteamClient: any;
 
@@ -10,32 +13,35 @@ const dirOf = (p: string) => p.slice(0, p.lastIndexOf("/") + 1);
 async function applyArt(shortcut: number, steamAppid: number) {
   const { assets } = await api.art(steamAppid);
   for (const [type, ext, data] of assets) {
-    await SteamClient.Apps.SetCustomArtworkForApp(shortcut, data, ext, type);
+    await step(`art ${type}`, SteamClient.Apps.SetCustomArtworkForApp(shortcut, data, ext, type));
   }
 }
 
 async function configure(shortcut: number, name: string) {
   const cfg = await api.config();
-  SteamClient.Apps.SetShortcutName(shortcut, name);
-  if (cfg.launch_options) SteamClient.Apps.SetShortcutLaunchOptions(shortcut, cfg.launch_options);
-  await SteamClient.Apps.SpecifyCompatTool(shortcut, cfg.proton_tool);
+  await step("name", SteamClient.Apps.SetShortcutName(shortcut, name));
+  if (cfg.launch_options) await step("launch options", SteamClient.Apps.SetShortcutLaunchOptions(shortcut, cfg.launch_options));
+  await step("Proton", SteamClient.Apps.SpecifyCompatTool(shortcut, cfg.proton_tool));
 }
 
-/** Create the Steam shortcut for a finished job, or repoint the installer shortcut at the game. */
+/** Create the Steam shortcut for a finished job, or finish one a previous attempt (or the installer) made. */
 export async function addToSteam(job: Job, exe = job.exe ?? ""): Promise<number> {
   if (!exe) throw new Error("No game .exe to add");
   let id = job.shortcut_id ?? 0;
+  log(job.name, id ? `reusing shortcut ${id}` : "creating shortcut", exe);
   if (id) {
-    SteamClient.Apps.SetShortcutExe(id, `"${exe}"`);
-    SteamClient.Apps.SetShortcutStartDir(id, dirOf(exe));
+    await step("exe", SteamClient.Apps.SetShortcutExe(id, `"${exe}"`));
+    await step("start dir", SteamClient.Apps.SetShortcutStartDir(id, dirOf(exe)));
   } else {
     // AddShortcut takes plain paths and quotes the exe itself (spike S2).
-    id = Number(await SteamClient.Apps.AddShortcut(job.name, exe, dirOf(exe), ""));
+    id = Number(await step("AddShortcut", SteamClient.Apps.AddShortcut(job.name, exe, dirOf(exe), "")));
     if (!id) throw new Error("Steam did not create the shortcut");
+    await api.act(job.id, "shortcut-created", { shortcut_id: id });
   }
   await configure(id, job.name);
   await applyArt(id, job.appid);
   await api.act(job.id, "steam-added", { shortcut_id: id, exe });
+  log(job.name, "done, shortcut", id);
   return id;
 }
 

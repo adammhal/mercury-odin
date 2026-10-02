@@ -204,6 +204,11 @@ impl Manager {
         Ok(self.get(id).unwrap())
     }
 
+    /// Steam made the shortcut; the plugin is still configuring it. A retry reuses it instead of adding a duplicate.
+    pub fn shortcut_created(&self, id: u64, shortcut_id: u32) {
+        self.update(id, |j| if j.state == State::Ready { j.shortcut_id = Some(shortcut_id) });
+    }
+
     /// The plugin created (or repointed) the Steam shortcut. The game is installed.
     pub fn steam_added(&self, id: u64, shortcut_id: u32, exe: Option<PathBuf>) -> Result<()> {
         let job = self.get(id).ok_or_else(|| anyhow!("no such job"))?;

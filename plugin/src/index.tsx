@@ -22,6 +22,7 @@ const ROUTES: [string, FC][] = [
 /** Background work that must happen even when no Mercury page is open. */
 function startWatcher() {
   const busy = new Set<number>();
+  const attempts = new Map<number, number>();
   const seen = new Map<number, string>();
   let jobs: Job[] = [];
   const tick = async () => {
@@ -29,11 +30,16 @@ function startWatcher() {
     for (const j of jobs) {
       const prev = seen.get(j.id);
       seen.set(j.id, j.state);
-      if (j.state === "ready" && !busy.has(j.id)) {
+      if (j.state === "ready" && !busy.has(j.id) && (attempts.get(j.id) ?? 0) < 5) {
         busy.add(j.id);
+        const n = (attempts.get(j.id) ?? 0) + 1;
+        attempts.set(j.id, n);
         addToSteam(j).then(
           () => toaster.toast({ title: "Mercury", body: `${j.name} is in your Steam library` }),
-          (e) => toaster.toast({ title: "Mercury", body: `Could not add ${j.name} to Steam: ${e.message}` }),
+          (e) => {
+            console.log("[Mercury] add to Steam failed", j.name, `attempt ${n}:`, e.message);
+            if (n >= 5) toaster.toast({ title: "Mercury", body: `Could not add ${j.name} to Steam: ${e.message}` });
+          },
         ).finally(() => busy.delete(j.id));
       }
       if (prev && prev !== j.state) {

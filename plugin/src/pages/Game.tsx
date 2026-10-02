@@ -1,7 +1,7 @@
 import { ConfirmModal, Focusable, Navigation, showModal, Spinner, useParams } from "@decky/ui";
 import { toaster } from "@decky/api";
-import { useState } from "react";
-import { api, bytes, cdn, Source } from "../api";
+import { useEffect, useState } from "react";
+import { api, Availability, bytes, cdn, Source } from "../api";
 import { useOnce, usePoll } from "../hooks";
 import { downloadInBrowser } from "../browser";
 import { gameId, removeShortcut } from "../steam";
@@ -13,8 +13,18 @@ export function Game() {
   const { appid: raw } = useParams<{ appid: string }>();
   const appid = Number(raw);
   const [app] = useOnce(() => api.app(appid), [appid]);
-  const [found, srcErr] = useOnce(async () => (app ? api.sources(app.name) : undefined), [app?.name]);
   const [status] = usePoll(api.status, 10000);
+  const [refreshTick, setRefreshTick] = useState(0);
+  const [found, srcErr] = useOnce(async () => (app ? api.sources(app.name, refreshTick > 0) : undefined), [app?.name, refreshTick]);
+  const [avail, setAvail] = useState<Record<string, Availability>>({});
+  // Ask Real-Debrid which torrent sources are already cached (instant). Probes are remembered for a day.
+  useEffect(() => {
+    const magnets = (found?.sources ?? []).filter((s) => s.magnet).map((s) => s.magnet!).slice(0, 6);
+    if (!magnets.length || !status?.rd_key_set) return;
+    let live = true;
+    api.cached(magnets).then((r) => live && setAvail(r), () => {});
+    return () => { live = false; };
+  }, [found, status?.rd_key_set]);
   const [lib, , reloadLib] = usePoll(api.library, 5000);
   const [jobs] = usePoll(api.jobs, 1500);
   const [busy, setBusy] = useState(false);
@@ -76,9 +86,13 @@ export function Game() {
           <Btn style={{ width: 160, marginTop: 6 }} onClick={() => Navigation.Navigate("/mercury/downloads")}>Open downloads</Btn>
         </div>}
 
-        <div style={{ fontSize: 13, fontWeight: 600, color: "#fff", margin: "4px 0 8px" }}>
-          Sources <span style={{ color: C.dim, fontWeight: 500, fontSize: 13, marginLeft: 8 }}>{bytes(free)} free</span>
-        </div>
+        <Focusable flow-children="horizontal" style={{ display: "flex", alignItems: "center", gap: 10, margin: "4px 0 8px" }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: "#fff" }}>
+            Sources <span style={{ color: C.dim, fontWeight: 500, fontSize: 13, marginLeft: 8 }}>{bytes(free)} free</span>
+          </div>
+          <Btn style={{ height: 26, fontSize: 12, marginLeft: "auto" }} disabled={!found && !srcErr}
+            onClick={() => { setAvail({}); setRefreshTick((n) => n + 1); }}>Refresh sources</Btn>
+        </Focusable>
         {!found && !srcErr && <div style={{ display: "flex", gap: 10, alignItems: "center", color: C.dim }}><Spinner style={{ width: 22 }} />Searching sources. The Mercury server can take a minute to wake up.</div>}
         {srcErr && <div style={{ color: C.bad }}>{srcErr}</div>}
         {found?.errors.map((e) => <div key={e} style={{ color: C.warn, fontSize: 13, marginBottom: 6 }}>{e}</div>)}
@@ -102,6 +116,9 @@ export function Game() {
                 <div style={{ whiteSpace: "nowrap", maxWidth: 380, overflow: "hidden", textAlign: "right" }}>
                   <Chip tone="accent">{s.provider}</Chip>
                   {s.version && <Chip>{s.version}</Chip>}
+                  {s.magnet && avail[s.magnet] === "cached" && <Chip tone="ok">Cached · instant</Chip>}
+                  {s.magnet && avail[s.magnet] === "not_cached" && <Chip>Not cached</Chip>}
+                  {s.magnet && avail[s.magnet] === "blocked" && <Chip tone="bad">Blocked by Real-Debrid</Chip>}
                   {s.magnet ? <Chip>Torrent</Chip> : <Chip>Direct link</Chip>}
                   {blocked && <Chip tone="warn">Browser download</Chip>}
                   {s.repack && !blocked && <Chip tone="warn">May not install on ARM</Chip>}
