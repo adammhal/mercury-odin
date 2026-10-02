@@ -32,7 +32,7 @@ export function Game() {
       setBusy(false);
     };
     showModal(<ConfirmModal strTitle={`Install ${app?.name}?`} strOKButtonText="Install" onOK={go}
-      strDescription={`${s.provider} · ${s.name}\n\nDownload ${s.size || "unknown size"}, about ${bytes(est)} installed. Needs about ${bytes(need)} free while installing; ${bytes(free)} is free.${!status?.rd_key_set ? "\n\nAdd your Real-Debrid key in Mercury settings first." : ""}`} />);
+      strDescription={`${s.provider} · ${s.name}\n\n${s.repack ? "This is a repack. Its installer currently gets stuck unpacking on the Odin (32-bit x86 emulation). A pre-installed source is more likely to work.\n\n" : ""}Download ${s.size || "unknown size"}, about ${bytes(est)} installed. Needs about ${bytes(need)} free while installing; ${bytes(free)} is free.${!status?.rd_key_set ? "\n\nAdd your Real-Debrid key in Mercury settings first." : ""}`} />);
   };
 
   const uninstall = () => showModal(<ConfirmModal strTitle={`Uninstall ${entry?.name}?`} strOKButtonText="Uninstall"
@@ -96,6 +96,7 @@ export function Game() {
                   {s.version && <Chip>{s.version}</Chip>}
                   {s.magnet ? <Chip>Torrent</Chip> : <Chip>Direct link</Chip>}
                   {blocked && <Chip tone="warn">Host not supported</Chip>}
+                  {s.repack && !blocked && <Chip tone="warn">May not install on ARM</Chip>}
                   {tight && !blocked && <Chip tone="bad">Not enough space</Chip>}
                 </div>
               </Focusable>

@@ -24,9 +24,20 @@ pub struct Source {
     /// False when Real-Debrid supports none of the source's hosts, so it cannot be downloaded.
     #[serde(default = "yes")]
     pub supported: bool,
+    /// True for repacks that need their own installer (see `is_repack`).
+    #[serde(default)]
+    pub repack: bool,
 }
 
 fn yes() -> bool { true }
+
+/// Repacks ship a 32-bit setup.exe that must decompress the game. On the Odin (FEX WoW64) FitGirl's
+/// unpacker spins at 0.3% (2026-10-02), so these rank below sources that ship the game ready to run.
+pub fn is_repack(provider: &str, name: &str) -> bool {
+    let p = provider.to_lowercase();
+    let n = name.to_lowercase();
+    ["fitgirl", "dodi", "kaos", "elamigos", "xatab", "masquerade"].iter().any(|r| p.contains(r) || n.contains(&format!("{r} repack")) || n.contains(&format!("[{r}")))
+}
 
 #[derive(Deserialize)]
 struct ServerItem {
@@ -182,6 +193,7 @@ pub async fn search(http: &reqwest::Client, cfg: &Config, name: &str) -> (Vec<So
                     version: None,
                     urls: vec![],
                     supported: true,
+                    repack: false,
                 }));
             }
         }
@@ -206,11 +218,13 @@ pub async fn search(http: &reqwest::Client, cfg: &Config, name: &str) -> (Vec<So
                 version: r.version.as_deref().and_then(clean_version),
                 urls,
                 supported,
+                repack: false,
             }));
         }
     }
     // Best match first; sources that cannot be downloaded go to the bottom.
-    out.sort_by(|a, b| b.1.supported.cmp(&a.1.supported).then(b.0.partial_cmp(&a.0).unwrap()));
+    for (_, src) in out.iter_mut() { src.repack = is_repack(&src.provider, &src.name); }
+    out.sort_by(|a, b| b.1.supported.cmp(&a.1.supported).then(a.1.repack.cmp(&b.1.repack)).then(b.0.partial_cmp(&a.0).unwrap()));
     (out.into_iter().map(|(_, s)| s).collect(), errors)
 }
 
@@ -222,6 +236,13 @@ mod tests {
         assert_eq!(parse_size("1.5 GB"), (1.5 * (1u64 << 30) as f64) as u64);
         assert_eq!(parse_size("814 MB"), 814 << 20);
         assert_eq!(parse_size("N/A"), 0);
+    }
+    #[test]
+    fn repacks() {
+        assert!(is_repack("FitGirl", "Skate Story"));
+        assert!(is_repack("TorrentGames", "Elden Ring [DODI Repack]"));
+        assert!(!is_repack("SteamRIP", "Skate Story Free Download"));
+        assert!(!is_repack("OnlineFix", "Hollow Knight Silksong Online"));
     }
     #[test]
     fn titles() {

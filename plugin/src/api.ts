@@ -3,7 +3,7 @@ import { fetchNoCors } from "@decky/api";
 const BASE = "http://127.0.0.1:47800";
 
 export type App = { appid: number; name: string; description: string; genres: string[]; release: string; developer: string };
-export type Source = { name: string; provider: string; size: string; size_bytes: number; magnet?: string | null; url?: string | null; version?: string | null; urls?: string[]; supported?: boolean };
+export type Source = { name: string; provider: string; size: string; size_bytes: number; magnet?: string | null; url?: string | null; version?: string | null; urls?: string[]; supported?: boolean; repack?: boolean };
 export type JobState = "queued" | "resolving" | "caching" | "downloading" | "paused" | "extracting" | "needs_setup" | "installing" | "ready" | "done" | "failed" | "cancelled";
 export type Job = {
   id: number; appid: number; name: string; source: Source; state: JobState; error?: string | null;
