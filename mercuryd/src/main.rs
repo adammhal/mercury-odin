@@ -21,7 +21,12 @@ struct App { m: Arc<jobs::Manager> }
 
 struct ApiError(anyhow::Error);
 impl IntoResponse for ApiError {
-    fn into_response(self) -> Response { (StatusCode::BAD_REQUEST, Json(json!({ "error": format!("{:#}", self.0) }))).into_response() }
+    fn into_response(self) -> Response {
+        let msg = format!("{:#}", self.0);
+        // Every refused request lands in mercuryd.log, so the log explains what the UI showed.
+        tracing::warn!("request failed: {msg}");
+        (StatusCode::BAD_REQUEST, Json(json!({ "error": msg }))).into_response()
+    }
 }
 impl<E: Into<anyhow::Error>> From<E> for ApiError { fn from(e: E) -> Self { Self(e.into()) } }
 type R = Result<Json<Value>, ApiError>;
@@ -91,6 +96,8 @@ async fn list_jobs(State(a): State<App>) -> R { Ok(Json(json!(a.m.jobs()))) }
 #[derive(Deserialize)]
 struct NewJob { appid: u32, name: String, source: sources::Source, #[serde(default)] local_file: Option<std::path::PathBuf> }
 async fn new_job(State(a): State<App>, Json(j): Json<NewJob>) -> R {
+    tracing::info!("new job: {} ({}) from {}{}", j.name, j.appid, j.source.provider,
+        j.local_file.as_ref().map(|f| format!(", local file {}", f.display())).unwrap_or_default());
     let files = match &j.local_file {
         Some(f) => {
             // Only files in the browser's download folder may be handed to a job.
