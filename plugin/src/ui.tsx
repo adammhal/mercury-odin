@@ -13,7 +13,8 @@ export const page: CSSProperties = {
 
 export function Chip({ children, tone }: { children: ReactNode; tone?: "ok" | "warn" | "bad" | "accent" }) {
   const col = tone ? C[tone] : C.text;
-  return <span style={{ display: "inline-block", fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 99, marginRight: 6, color: col, background: "rgba(255,255,255,.08)" }}>{children}</span>;
+  return <span style={{ display: "inline-block", maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", verticalAlign: "middle",
+    fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 99, marginLeft: 6, color: col, background: "rgba(255,255,255,.08)" }}>{children}</span>;
 }
 
 /** The working progress layout from spike S3: a Field with the bar below. ProgressBarItem overflows panels. */

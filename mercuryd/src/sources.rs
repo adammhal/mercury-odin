@@ -76,6 +76,18 @@ async fn rd_hosts(http: &reqwest::Client) -> Vec<String> {
     }
 }
 
+/// A version is short ("v1.0.3", "Build 10371237"). Anything else is scraped page text.
+pub fn clean_version(v: &str) -> Option<String> {
+    let mut v = clean_title(v);
+    for sep in [" + ", " (", " |", " ["] {
+        if let Some(i) = v.find(sep) { v.truncate(i); }
+    }
+    let lower = v.to_lowercase();
+    let shaped = lower.starts_with('v') || lower.starts_with("build") || lower.starts_with("b.") || v.contains('.');
+    let ok = shaped && v.chars().count() <= 24 && v.chars().any(|c| c.is_ascii_digit());
+    ok.then_some(v)
+}
+
 /// Scraped titles sometimes carry the store page text ("... Storage: 12 GB GAME INFO Genre: ...").
 pub fn clean_title(t: &str) -> String {
     let mut s = t.trim().to_string();
@@ -191,7 +203,7 @@ pub async fn search(http: &reqwest::Client, cfg: &Config, name: &str) -> (Vec<So
                 provider: "SteamRIP".into(),
                 magnet: None,
                 url: urls.first().cloned(),
-                version: r.version.filter(|v| v != "Unknown"),
+                version: r.version.as_deref().and_then(clean_version),
                 urls,
                 supported,
             }));
@@ -215,6 +227,12 @@ mod tests {
     fn titles() {
         assert_eq!(clean_title("Skate Story Free Download 12 Storage: 12 GB available space GAME INFO Genre: Action"), "Skate Story Free Download 12");
         assert_eq!(host("https://www.gofile.io/d/abc"), "gofile.io");
+        assert_eq!(clean_version("v1.0.3").as_deref(), Some("v1.0.3"));
+        assert_eq!(clean_version("12 Storage: 12 GB available space GAME INFO Genre: Action"), None);
+        assert_eq!(clean_version("Unknown"), None);
+        assert_eq!(clean_version("Build 10371237").as_deref(), Some("Build 10371237"));
+        assert_eq!(clean_version("1.0.28324").as_deref(), Some("1.0.28324"));
+        assert_eq!(clean_version("Build 1286980 + Multiplayer").as_deref(), Some("Build 1286980"));
     }
     #[test]
     fn matching() {

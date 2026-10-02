@@ -91,7 +91,7 @@ export function Game() {
                     {blocked ? "Real-Debrid cannot download from this source's hosts" : s.size_bytes ? `${s.size} download · ~${bytes(est)} installed` : "Size unknown"}
                   </div>
                 </div>
-                <div style={{ whiteSpace: "nowrap" }}>
+                <div style={{ whiteSpace: "nowrap", maxWidth: 380, overflow: "hidden", textAlign: "right" }}>
                   <Chip tone="accent">{s.provider}</Chip>
                   {s.version && <Chip>{s.version}</Chip>}
                   {s.magnet ? <Chip>Torrent</Chip> : <Chip>Direct link</Chip>}
