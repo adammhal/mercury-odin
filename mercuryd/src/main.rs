@@ -1,3 +1,6 @@
+// No console window on Windows; the Mercury app captures the log.
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 mod browser;
 mod config;
 mod download;
@@ -8,6 +11,7 @@ mod rd;
 mod sources;
 mod steam;
 mod storage;
+mod warmup;
 
 use axum::{Json, Router, extract::{Path, Query, State}, http::StatusCode, response::{IntoResponse, Response}, routing::{get, post}};
 use serde::Deserialize;
@@ -31,6 +35,13 @@ impl IntoResponse for ApiError {
 impl<E: Into<anyhow::Error>> From<E> for ApiError { fn from(e: E) -> Self { Self(e.into()) } }
 type R = Result<Json<Value>, ApiError>;
 
+fn warmup_installed() -> bool {
+    #[cfg(windows)]
+    return warmup::db_path().is_some();
+    #[cfg(not(windows))]
+    false
+}
+
 fn cfg(a: &App) -> config::Config { a.m.cfg.lock().unwrap().clone() }
 
 async fn status(State(a): State<App>) -> R {
@@ -43,8 +54,10 @@ async fn status(State(a): State<App>) -> R {
         "unrar": extract::unrar_path().exists(),
         // Launch options for repack installers: full x87 precision, Proton's default log, no Armada wrapper
         // (the wrapper would replace FEX_APP_CONFIG with its own).
-        "installer_launch_options": install::installer_fex_config().ok().map(|p| format!("PROTON_LOG=1 FEX_APP_CONFIG={} %command%", p.display())),
+        "installer_launch_options": if cfg!(unix) { install::installer_fex_config().ok().map(|p| format!("PROTON_LOG=1 FEX_APP_CONFIG={} %command%", p.display())) } else { None },
         "storage": { "total": s.total, "free": s.free, "mercury": mercury },
+        "platform": std::env::consts::OS,
+        "warmup": warmup_installed(),
     })))
 }
 
@@ -126,6 +139,8 @@ async fn job_action(State(a): State<App>, Path((id, act)): Path<(u64, String)>, 
         "remove" => a.m.remove(id).await?,
         "setup-launched" => a.m.setup_launched(id, b.shortcut_id.ok_or_else(|| anyhow::anyhow!("shortcut_id required"))?),
         "setup-done" => return Ok(Json(json!(a.m.setup_done(id)?))),
+        #[cfg(windows)]
+        "run-setup" => a.m.clone().run_setup(id).await?,
         "steam-added" => a.m.steam_added(id, b.shortcut_id.ok_or_else(|| anyhow::anyhow!("shortcut_id required"))?, b.exe)?,
         _ => return Err(anyhow::anyhow!("unknown action {act}").into()),
     }
@@ -139,6 +154,27 @@ async fn uninstall(State(a): State<App>, Path(id): Path<u32>) -> R { Ok(Json(jso
 async fn installer_files(State(a): State<App>, Path(id): Path<u32>) -> R {
     Ok(Json(match a.m.installer_files(id) { Some((d, n)) => json!({ "dir": d, "size": n }), None => json!(null) }))
 }
+/// Windows: start an installed game directly (its folder as the working directory).
+async fn play(State(a): State<App>, Path(id): Path<u32>) -> R {
+    let e = a.m.library().into_iter().find(|e| e.appid == id).ok_or_else(|| anyhow::anyhow!("not installed"))?;
+    std::process::Command::new(&e.exe).current_dir(e.exe.parent().unwrap_or(&e.dir)).spawn()
+        .map_err(|err| anyhow::anyhow!("could not start {}: {err}", e.exe.display()))?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+struct OpenUrl { url: String }
+/// Open a download page in the default browser (for hosts Real-Debrid cannot fetch).
+async fn open_url(Json(o): Json<OpenUrl>) -> R {
+    let ok = o.url.starts_with("https://") && o.url.chars().all(|c| c.is_ascii_alphanumeric() || "-._~:/?#[]@!&()*+,;=%".contains(c));
+    if !ok { return Err(anyhow::anyhow!("not a plain https link").into()); }
+    #[cfg(windows)]
+    std::process::Command::new("rundll32").args(["url.dll,FileProtocolHandler", &o.url]).spawn()?;
+    #[cfg(not(windows))]
+    std::process::Command::new("xdg-open").arg(&o.url).spawn()?;
+    Ok(Json(json!({ "ok": true })))
+}
+
 async fn delete_installer_files(State(a): State<App>, Path(id): Path<u32>) -> R { Ok(Json(json!({ "freed": a.m.delete_installer_files(id)? }))) }
 
 #[tokio::main]
@@ -164,7 +200,13 @@ async fn main() -> anyhow::Result<()> {
         .route("/library", get(library))
         .route("/library/{appid}/uninstall", post(uninstall))
         .route("/library/{appid}/installer-files", get(installer_files).delete(delete_installer_files))
-        .with_state(App { m });
+        .route("/library/{appid}/play", post(play))
+        .route("/open", post(open_url))
+        .with_state(App { m })
+        // The Windows app's window (tauri.localhost) calls the engine from a different origin.
+        .layer(tower_http::cors::CorsLayer::new()
+            .allow_origin(["http://tauri.localhost".parse::<axum::http::HeaderValue>()?, "tauri://localhost".parse()?, "http://localhost:1420".parse()?])
+            .allow_methods(tower_http::cors::Any).allow_headers(tower_http::cors::Any));
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", PORT)).await?;
     tracing::info!("mercuryd {} on 127.0.0.1:{PORT}", env!("CARGO_PKG_VERSION"));
     axum::serve(listener, app).await?;

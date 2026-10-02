@@ -35,7 +35,26 @@ fn first_parts(files: &[PathBuf]) -> Vec<PathBuf> {
 }
 
 pub fn unrar_path() -> PathBuf {
+    // Full 7-Zip on Windows reads RAR (including RAR5) itself, so it doubles as the RAR tool.
+    #[cfg(windows)]
+    return seven_zip();
+    #[cfg(not(windows))]
     crate::config::home().join(".local/share/mercury/bin/unrar")
+}
+
+fn seven_zip() -> PathBuf {
+    #[cfg(windows)]
+    for p in [r"C:\Program Files\7-Zip\7z.exe", r"C:\Program Files (x86)\7-Zip\7z.exe"] {
+        if Path::new(p).exists() { return PathBuf::from(p); }
+    }
+    PathBuf::from("7z")
+}
+
+/// Child processes of a windowless engine would each open a console window on Windows.
+pub fn quiet(c: &mut Command) -> &mut Command {
+    #[cfg(windows)]
+    c.creation_flags(0x0800_0000);
+    c
 }
 
 /// `share` = (index, count): this archive's slice of the overall bar.
@@ -43,7 +62,7 @@ async fn run(archive: &Path, dest: &Path, password: Option<&str>, progress: Opti
     tokio::fs::create_dir_all(dest).await?;
     let lower = archive.to_string_lossy().to_lowercase();
     let is_rar = lower.ends_with(".rar") || Regex::new(r"\.r\d{2}$").unwrap().is_match(&lower);
-    let mut cmd = if is_rar {
+    let mut cmd = if is_rar && cfg!(not(windows)) {
         let mut c = Command::new(unrar_path());
         // -idcd hides the banner and "Done" but keeps the running percentage, which we read for progress.
         c.arg("x").arg("-o+").arg("-y").arg("-idcd");
@@ -51,13 +70,14 @@ async fn run(archive: &Path, dest: &Path, password: Option<&str>, progress: Opti
         c.arg(archive).arg(format!("{}/", dest.display()));
         c
     } else {
-        let mut c = Command::new("7z");
+        let mut c = Command::new(seven_zip());
         // -bsp1 sends the running percentage to stdout; -bso0 drops the file list.
         c.arg("x").arg("-y").arg("-bsp1").arg("-bso0").arg(format!("-o{}", dest.display()));
         if let Some(pw) = password { c.arg(format!("-p{pw}")); }
         c.arg(archive);
         c
     };
+    quiet(&mut cmd);
     cmd.stdin(std::process::Stdio::null()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
     let mut child = cmd.spawn().with_context(|| format!("could not start extractor for {}", archive.display()))?;
     let mut stdout = child.stdout.take().unwrap();
@@ -166,9 +186,9 @@ mod tests {
         let fix = root.join("fix");
         std::fs::create_dir_all(&fix).unwrap();
         std::fs::write(fix.join("fix.dll"), b"x").unwrap();
-        assert!(Std::new("7z").args(["a", "-y", "-bso0", "-ponline-fix.me"]).arg(stage.join("Game/Fix.7z")).arg(fix.join("fix.dll")).status().unwrap().success());
+        assert!(Std::new(seven_zip()).args(["a", "-y", "-bso0", "-ponline-fix.me"]).arg(stage.join("Game/Fix.7z")).arg(fix.join("fix.dll")).status().unwrap().success());
         std::fs::create_dir_all(&src).unwrap();
-        assert!(Std::new("7z").args(["a", "-y", "-bso0"]).arg(src.join("game.zip")).arg(stage.join("Game")).status().unwrap().success());
+        assert!(Std::new(seven_zip()).args(["a", "-y", "-bso0"]).arg(src.join("game.zip")).arg(stage.join("Game")).status().unwrap().success());
         let p = Permille::new(0);
         extract_all(&src, &dest, Some(&p)).await.unwrap();
         assert_eq!(p.load(Ordering::Relaxed), 1000, "progress reaches 100%");

@@ -34,9 +34,12 @@ fn with_cache<T>(f: impl FnOnce(&mut HashMap<u32, App>) -> T) -> T {
 }
 
 /// SteamID64 of the logged-in user, from the only numeric folder under userdata.
+/// With several accounts, the one whose localconfig.vdf changed last is the one in use.
 pub fn steam_id64() -> Option<u64> {
-    let dir = home().join(".local/share/Steam/userdata");
-    fs::read_dir(dir).ok()?.flatten().filter_map(|e| e.file_name().to_str()?.parse::<u64>().ok()).find(|&id| id > 0).map(|id| 76561197960265728 + id)
+    let dir = if cfg!(windows) { std::path::PathBuf::from(r"C:\Program Files (x86)\Steam\userdata") } else { home().join(".local/share/Steam/userdata") };
+    let mtime = |id: &u64| fs::metadata(dir.join(id.to_string()).join("config/localconfig.vdf")).and_then(|m| m.modified()).ok();
+    let ids: Vec<u64> = fs::read_dir(&dir).ok()?.flatten().filter_map(|e| e.file_name().to_str()?.parse::<u64>().ok()).filter(|&id| id > 0).collect();
+    ids.into_iter().max_by_key(|id| mtime(id)).map(|id| 76561197960265728 + id)
 }
 
 pub async fn details(http: &reqwest::Client, appid: u32) -> Result<App> {
