@@ -7,6 +7,9 @@ import { Btn, C, FOCUS, FocusStyle, page, scrollIntoView } from "../ui";
 
 type Item = { appid: number; name: string; tag?: string };
 
+/** Survives leaving the page (module state lives as long as the plugin), so B returns to the same cover. */
+let lastFocus: Item | undefined;
+
 const preloaded = new Set<number>();
 function preload(appid?: number) {
   if (!appid || preloaded.has(appid)) return;
@@ -15,14 +18,16 @@ function preload(appid?: number) {
 }
 
 /** Memoised so moving focus re-renders only the hero, not every cover. */
-const Row = memo(function Row({ title, items, onFocus, first }: { title: string; items: Item[]; onFocus: (i: Item, idx: number, list: Item[]) => void; first?: boolean }) {
+const Row = memo(function Row({ title, items, onFocus, focusId }: { title: string; items: Item[]; onFocus: (i: Item, idx: number, list: Item[]) => void; focusId?: number }) {
+  // Bring the restored cover into view before Steam focuses it, so the row does not jump.
+  const restore = useCallback((el: HTMLDivElement | null) => { el?.scrollIntoView({ block: "nearest", inline: "center" }); }, []);
   if (!items.length) return null;
   return (
     <div style={{ marginBottom: 10 }}>
       <div style={{ fontSize: 13, fontWeight: 600, color: "#fff", margin: "0 0 6px 32px" }}>{title}</div>
       <Focusable flow-children="horizontal" style={{ display: "flex", gap: 10, overflowX: "auto", padding: "4px 32px 6px", scrollbarWidth: "none" }}>
         {items.map((it, i) => (
-          <Focusable key={it.appid} autoFocus={first && i === 0} focusClassName={FOCUS} noFocusRing
+          <Focusable key={it.appid} autoFocus={it.appid === focusId} ref={it.appid === focusId ? restore : undefined} focusClassName={FOCUS} noFocusRing
             onFocus={(e) => { onFocus(it, i, items); scrollIntoView(e); }}
             onActivate={() => Navigation.Navigate(`/mercury/game/${it.appid}`)}
             onOptionsButton={() => Navigation.Navigate("/mercury/search")} onOptionsActionDescription="Search"
@@ -39,7 +44,7 @@ export function Home() {
   const [wish] = usePoll(api.wishlist, 0);
   const [lib] = usePoll(api.library, 5000);
   const [jobs] = usePoll(api.jobs, 2000);
-  const [cur, setCur] = useState<Item>();
+  const [cur, setCur] = useState<Item | undefined>(lastFocus);
   const [info, setInfo] = useState<App>();
   const settle = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
@@ -52,6 +57,7 @@ export function Home() {
 
   // Focus moves instantly (Steam draws the outline); the hero follows once the D-pad stops.
   const onFocus = useCallback((it: Item, i: number, list: Item[]) => {
+    lastFocus = it;
     clearTimeout(settle.current);
     settle.current = setTimeout(() => {
       setCur(it);
@@ -62,6 +68,11 @@ export function Home() {
   useEffect(() => () => clearTimeout(settle.current), []);
 
   useEffect(() => { if (!cur) setCur(installed[0] ?? wishlist[0]); }, [installed, wishlist]);
+  // Which cover gets focus when the page opens: the one you left from, if it is still listed.
+  const focusId = useMemo(() => {
+    const all = [...installed, ...wishlist];
+    return all.find((i) => i.appid === lastFocus?.appid)?.appid ?? all[0]?.appid;
+  }, [installed, wishlist]);
   useEffect(() => {
     if (!cur) return;
     const w = wish?.find((a) => a.appid === cur.appid);
@@ -98,8 +109,8 @@ export function Home() {
 
       <div style={{ position: "relative", flex: "none", height: 176, marginBottom: 40, overflowY: "auto", scrollbarWidth: "none" }}>
         {!wish && !lib && <div style={{ marginLeft: 32, color: C.dim, fontSize: 12 }}>Loading your Steam wishlist…</div>}
-        <Row title="Installed with Mercury" items={installed} onFocus={onFocus} first />
-        <Row title="Your Steam wishlist" items={wishlist} onFocus={onFocus} first={!installed.length} />
+        <Row title="Installed with Mercury" items={installed} onFocus={onFocus} focusId={focusId} />
+        <Row title="Your Steam wishlist" items={wishlist} onFocus={onFocus} focusId={focusId} />
       </div>
     </div>
   );

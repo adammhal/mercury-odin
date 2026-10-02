@@ -46,11 +46,13 @@ pub fn is_wine_stub(p: &Path) -> bool {
     hay.windows(16).any(|w| w == b"Wine placeholder") || hay.windows(12).any(|w| w == b"Wine builtin")
 }
 
-/// Folders Wine creates in a fresh prefix. A game is never installed under these.
+/// Folders Wine and Proton fill in a prefix. A game is never installed under these.
 pub fn is_wine_dir(p: &Path) -> bool {
     let s = p.to_string_lossy().to_lowercase();
     ["/drive_c/windows/", "/drive_c/users/", "/drive_c/programdata/", "/common files/", "/internet explorer/", "/windows media player/",
-     "/windows nt/", "/windows mail/", "/windows photo viewer/", "/windows defender/", "/windowspowershell/", "/msbuild/", "/reference assemblies/"]
+     "/windows nt/", "/windows mail/", "/windows photo viewer/", "/windows defender/", "/windowspowershell/", "/msbuild/", "/reference assemblies/",
+     // Proton adds its own steam.exe helper and VR stubs to every game prefix.
+     "/program files (x86)/steam/", "/program files/steam/", "/drive_c/vrclient/", "/drive_c/openxr/"]
         .iter().any(|d| s.contains(d))
 }
 
@@ -92,6 +94,8 @@ mod tests {
         let c = find_game_exe(&d, "Hollow Knight: Silksong");
         assert_eq!(c[0].path.file_name().unwrap(), "Silksong.exe");
         assert!(c.iter().all(|x| !x.path.to_string_lossy().contains("vcredist")));
+        assert!(is_wine_dir(Path::new("/x/pfx/drive_c/Program Files (x86)/Steam/steam.exe")));
+        assert!(!is_wine_dir(Path::new("/x/pfx/drive_c/Games/Skate Story/SkateStory.exe")));
         std::fs::write(d.join("setup.exe"), b"MZ").unwrap();
         assert!(find_setup(&d).is_some());
         std::fs::remove_dir_all(d).unwrap();

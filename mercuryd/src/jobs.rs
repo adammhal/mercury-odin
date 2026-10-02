@@ -34,6 +34,8 @@ pub struct Job {
     #[serde(default)] pub exe: Option<PathBuf>,
     #[serde(default)] pub candidates: Vec<PathBuf>,
     #[serde(default)] pub shortcut_id: Option<u32>,
+    /// When the installer was last started (Unix seconds). Only files created after it can be the game.
+    #[serde(default)] pub setup_started: Option<u64>,
     #[serde(default)] pub cache_progress: f64,
     #[serde(default)] pub done: u64,
     #[serde(default)] pub total: u64,
@@ -52,6 +54,8 @@ pub struct Entry {
     pub size: u64,
     #[serde(default)] pub version: Option<String>,
     pub installed: u64,
+    /// A repack's setup files, kept until the user deletes them.
+    #[serde(default)] pub installer_dir: Option<PathBuf>,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -106,7 +110,7 @@ impl Manager {
     pub fn jobs(&self) -> Vec<Job> {
         let s = self.saved.lock().unwrap();
         let live = self.live.lock().unwrap();
-        s.jobs.iter().filter(|j| j.state.active() || now() - j.created < 86400).cloned().map(|mut j| {
+        s.jobs.iter().cloned().map(|mut j| {
             if let Some(l) = live.get(&j.id) {
                 j.done = l.prog.done.load(Ordering::Relaxed);
                 j.total = j.total.max(l.prog.total.load(Ordering::Relaxed));
@@ -125,7 +129,7 @@ impl Manager {
         }
         s.next_id += 1;
         let job = Job { id: s.next_id, appid, name, source, state: State::Queued, error: None, torrent_id: None, links: vec![], dir: None,
-            setup_exe: None, exe: None, candidates: vec![], shortcut_id: None, cache_progress: 0.0, done: 0, total: 0, speed: 0, created: now() };
+            setup_exe: None, exe: None, candidates: vec![], shortcut_id: None, setup_started: None, cache_progress: 0.0, done: 0, total: 0, speed: 0, created: now() };
         s.jobs.push(job.clone());
         self.save(&s);
         drop(s);
@@ -151,11 +155,14 @@ impl Manager {
         let _ = tokio::fs::remove_dir_all(cfg.downloads_dir.join(id.to_string())).await;
         if let Some(d) = &job.dir { let _ = tokio::fs::remove_dir_all(d).await; }
         if let (Some(t), Ok(rd)) = (&job.torrent_id, Rd::new(self.http.clone(), &cfg.rd_key)) { let _ = rd.delete(t).await; }
+        let mut s = self.saved.lock().unwrap();
+        s.jobs.retain(|j| j.id != id);
+        self.save(&s);
     }
 
     /// The plugin launched the repack's setup.exe through a Steam shortcut.
     pub fn setup_launched(&self, id: u64, shortcut_id: u32) {
-        self.update(id, |j| if j.state == State::NeedsSetup { j.state = State::Installing; j.shortcut_id = Some(shortcut_id) });
+        self.update(id, |j| if j.state == State::NeedsSetup { j.state = State::Installing; j.shortcut_id = Some(shortcut_id); j.setup_started = Some(now()); j.error = None });
     }
 
     /// The installer closed. Look for the game inside the shortcut's Proton prefix.
@@ -170,6 +177,9 @@ impl Manager {
             if !base.is_dir() { continue; }
             for c in install::find_game_exe(&base, &job.name) {
                 if c.score <= -500 || install::is_wine_dir(&c.path) || install::is_wine_stub(&c.path) { continue; }
+                // ctime is set when the file is created and cannot be backdated by an installer (unlike mtime).
+                let created = std::fs::metadata(&c.path).map(|m| std::os::unix::fs::MetadataExt::ctime(&m) as u64).unwrap_or(0);
+                if job.setup_started.is_some_and(|t| created + 5 < t) { continue; }
                 cands.push(c.path);
             }
             if !cands.is_empty() { break; }
@@ -190,7 +200,8 @@ impl Manager {
         let repack = job.setup_exe.is_some();
         let dir = if repack { exe.parent().map(|p| p.to_path_buf()).unwrap_or_default() } else { job.dir.clone().unwrap_or_default() };
         let entry = Entry { appid: job.appid, name: job.name.clone(), size: storage::dir_size(&dir), dir, exe: exe.clone(), shortcut_id,
-            provider: job.source.provider.clone(), version: job.source.version.clone(), installed: now() };
+            provider: job.source.provider.clone(), version: job.source.version.clone(), installed: now(),
+            installer_dir: if repack { job.dir.clone() } else { None } };
         {
             let mut s = self.saved.lock().unwrap();
             s.library.retain(|e| e.appid != job.appid);
@@ -206,22 +217,56 @@ impl Manager {
     /// Installer files of a repack that is already installed, and their size.
     pub fn installer_files(&self, appid: u32) -> Option<(PathBuf, u64)> {
         let s = self.saved.lock().unwrap();
-        if !s.library.iter().any(|e| e.appid == appid) { return None; }
-        s.jobs.iter().filter(|j| j.appid == appid && j.setup_exe.is_some()).filter_map(|j| j.dir.clone()).find(|d| d.is_dir())
-            .map(|d| { let n = storage::dir_size(&d); (d, n) })
+        let d = s.library.iter().find(|e| e.appid == appid)?.installer_dir.clone().filter(|d| d.is_dir())?;
+        let n = storage::dir_size(&d);
+        Some((d, n))
     }
 
     pub fn delete_installer_files(&self, appid: u32) -> Result<u64> {
         let (d, n) = self.installer_files(appid).ok_or_else(|| anyhow!("no installer files"))?;
         std::fs::remove_dir_all(&d)?;
+        let mut s = self.saved.lock().unwrap();
+        if let Some(e) = s.library.iter_mut().find(|e| e.appid == appid) { e.installer_dir = None; }
+        self.save(&s);
         Ok(n)
+    }
+
+    /// Remove a finished, failed or cancelled job from the list, and delete what it left behind.
+    /// An installed game's files are never touched.
+    pub async fn remove(&self, id: u64) -> Result<()> {
+        let (job, installed_dirs) = {
+            let s = self.saved.lock().unwrap();
+            let job = s.jobs.iter().find(|j| j.id == id).cloned().ok_or_else(|| anyhow!("no such job"))?;
+            if job.state.active() { bail!("{} is still in progress. Cancel it first.", job.name); }
+            let dirs: Vec<PathBuf> = s.library.iter().flat_map(|e| [Some(e.dir.clone()), e.installer_dir.clone()]).flatten().collect();
+            (job, dirs)
+        };
+        let cfg = self.cfg.lock().unwrap().clone();
+        let _ = tokio::fs::remove_dir_all(cfg.downloads_dir.join(id.to_string())).await;
+        if job.state != State::Done {
+            if let Some(d) = &job.dir {
+                if !installed_dirs.iter().any(|x| x == d) { let _ = tokio::fs::remove_dir_all(d).await; }
+            }
+        }
+        let mut s = self.saved.lock().unwrap();
+        s.jobs.retain(|j| j.id != id);
+        self.save(&s);
+        Ok(())
+    }
+
+    /// Clear every job that is not in progress. Returns how many were cleared.
+    pub async fn clear_finished(&self) -> usize {
+        let ids: Vec<u64> = self.saved.lock().unwrap().jobs.iter().filter(|j| !j.state.active()).map(|j| j.id).collect();
+        let mut n = 0;
+        for id in ids { if self.remove(id).await.is_ok() { n += 1; } }
+        n
     }
 
     pub fn uninstall(&self, appid: u32) -> Result<Entry> {
         let mut s = self.saved.lock().unwrap();
         let i = s.library.iter().position(|e| e.appid == appid).ok_or_else(|| anyhow!("not installed"))?;
         let e = s.library.remove(i);
-        let repack_dirs: Vec<PathBuf> = s.jobs.iter().filter(|j| j.appid == appid && j.setup_exe.is_some()).filter_map(|j| j.dir.clone()).collect();
+        let repack_dirs: Vec<PathBuf> = e.installer_dir.iter().cloned().collect();
         s.jobs.retain(|j| j.appid != appid || j.state.active());
         self.save(&s);
         let (dir, sid) = (e.dir.clone(), e.shortcut_id);

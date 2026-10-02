@@ -41,6 +41,7 @@ export const api = {
   jobs: () => req<Job[]>("/jobs"),
   install: (appid: number, name: string, source: Source) => req<Job>("/jobs", "POST", { appid, name, source }),
   act: (id: number, act: string, body?: object) => req<unknown>(`/jobs/${id}/${act}`, "POST", body ?? {}),
+  clearJobs: () => req<{ cleared: number }>("/jobs/clear", "POST", {}),
   library: () => req<Entry[]>("/library"),
   uninstall: (appid: number) => req<Entry>(`/library/${appid}/uninstall`, "POST", {}),
   installerFiles: (appid: number) => req<{ dir: string; size: number } | null>(`/library/${appid}/installer-files`),

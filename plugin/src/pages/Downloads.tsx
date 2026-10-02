@@ -16,8 +16,10 @@ function Actions({ job, reload }: { job: Job; reload: () => void }) {
     reload();
   }));
   if (job.state === "installing") out.push(b("Installer done", act("setup-done")));
-  if (job.state !== "done" && job.state !== "cancelled") out.push(b("Cancel", () => showModal(
-    <ConfirmModal strTitle={`Cancel ${job.name}?`} strDescription="Stops the download and deletes its files." strOKButtonText="Cancel download" onOK={act("cancel")} />)));
+  const finished = ["done", "failed", "cancelled"].includes(job.state);
+  if (!finished) out.push(b("Cancel", () => showModal(
+    <ConfirmModal strTitle={`Cancel ${job.name}?`} strDescription="Stops the download, deletes its files, and removes it from this list." strOKButtonText="Cancel download" onOK={act("cancel")} />)));
+  if (finished) out.push(b("Clear", act("remove")));
   return <Focusable flow-children="horizontal" style={{ display: "flex", gap: 8 }}>{out}</Focusable>;
 }
 
@@ -28,7 +30,15 @@ export function Downloads() {
     <div style={page}>
       <FocusStyle />
       <div style={{ padding: "16px 28px 48px" }}>
-        <div style={{ fontSize: 18, fontWeight: 700, color: "#fff", marginBottom: 10 }}>Downloads</div>
+        <Focusable flow-children="horizontal" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+          <div style={{ fontSize: 18, fontWeight: 700, color: "#fff" }}>Downloads</div>
+          {list.some((j) => ["done", "failed", "cancelled"].includes(j.state)) &&
+            <Btn style={{ height: 28, fontSize: 12 }} onClick={async () => {
+              try { const r = await api.clearJobs(); toaster.toast({ title: "Mercury", body: `Cleared ${r.cleared} finished ${r.cleared === 1 ? "download" : "downloads"}` }); }
+              catch (e: any) { toaster.toast({ title: "Mercury", body: e.message }); }
+              reload();
+            }}>Clear finished</Btn>}
+        </Focusable>
         {err && <div style={{ color: C.bad }}>Mercury engine is not responding: {err}</div>}
         {jobs && !list.length && <div style={{ color: C.dim }}>Nothing downloading. Pick a game and a source to start.</div>}
         <Focusable flow-children="vertical">

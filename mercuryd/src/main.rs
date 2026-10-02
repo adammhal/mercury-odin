@@ -96,6 +96,7 @@ async fn job_action(State(a): State<App>, Path((id, act)): Path<(u64, String)>, 
         "pause" => a.m.pause(id),
         "resume" => a.m.resume(id),
         "cancel" => a.m.cancel(id).await,
+        "remove" => a.m.remove(id).await?,
         "setup-launched" => a.m.setup_launched(id, b.shortcut_id.ok_or_else(|| anyhow::anyhow!("shortcut_id required"))?),
         "setup-done" => return Ok(Json(json!(a.m.setup_done(id)?))),
         "steam-added" => a.m.steam_added(id, b.shortcut_id.ok_or_else(|| anyhow::anyhow!("shortcut_id required"))?, b.exe)?,
@@ -103,6 +104,8 @@ async fn job_action(State(a): State<App>, Path((id, act)): Path<(u64, String)>, 
     }
     Ok(Json(json!({ "ok": true })))
 }
+
+async fn clear_jobs(State(a): State<App>) -> R { Ok(Json(json!({ "cleared": a.m.clear_finished().await }))) }
 
 async fn library(State(a): State<App>) -> R { Ok(Json(json!(a.m.library()))) }
 async fn uninstall(State(a): State<App>, Path(id): Path<u32>) -> R { Ok(Json(json!(a.m.uninstall(id)?))) }
@@ -128,6 +131,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/steam/art/{id}", get(art))
         .route("/sources", get(sources))
         .route("/jobs", get(list_jobs).post(new_job))
+        .route("/jobs/clear", post(clear_jobs))
         .route("/jobs/{id}/{act}", post(job_action))
         .route("/library", get(library))
         .route("/library/{appid}/uninstall", post(uninstall))

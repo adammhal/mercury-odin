@@ -51,8 +51,9 @@ export async function runInstaller(job: Job): Promise<number> {
     SteamClient.Apps.SetShortcutName(id, `${job.name} (installer)`);
     await SteamClient.Apps.SpecifyCompatTool(id, cfg.proton_tool);
   }
-  // No frame-generation wrapper for an installer; PROTON_LOG writes ~/steam-<id>.log if it fails.
-  SteamClient.Apps.SetShortcutLaunchOptions(id, "PROTON_LOG=1 /usr/libexec/armada/armada-game-launch %command%");
+  // No frame-generation wrapper for an installer. PROTON_LOG writes ~/steam-<gameid>.log; +file records every path
+  // the installer opens, which is what a "path not found" needs.
+  SteamClient.Apps.SetShortcutLaunchOptions(id, "PROTON_LOG=1 WINEDEBUG=+timestamp,+pid,+tid,+seh,+loaddll,+file /usr/libexec/armada/armada-game-launch %command%");
   await api.act(job.id, "setup-launched", { shortcut_id: id });
   SteamClient.Apps.RunGame(gameId(id), "", -1, 100);
   return id;
