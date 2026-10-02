@@ -28,10 +28,18 @@ fn walk(dir: &Path, depth: usize, out: &mut Vec<(PathBuf, usize)>) {
 }
 
 /// A repack (FitGirl, DODI, ...) ships `setup.exe` at the top with data files, not a playable game.
+/// GOG offline installers (Appnetica's most common release) are `setup_<game>_<version>.exe` with `-N.bin` parts.
 pub fn find_setup(dir: &Path) -> Option<PathBuf> {
-    std::fs::read_dir(dir).ok()?.flatten().map(|e| e.path()).find(|p| {
-        p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.eq_ignore_ascii_case("setup.exe"))
-    })
+    let re = Regex::new(r"(?i)^setup(_[^\\/]+)?\.exe$").unwrap();
+    let mut found: Vec<PathBuf> = std::fs::read_dir(dir).ok()?.flatten().map(|e| e.path())
+        .filter(|p| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| re.is_match(n))).collect();
+    // A plain setup.exe wins; then installers that are not add-ons; then the shortest name.
+    let extra = Regex::new(r"(?i)_(dlc|soundtrack|ost|artbook|bonus|goodies|manual|wallpapers?)(_|\.|$)").unwrap();
+    found.sort_by_key(|p| {
+        let n = p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        (!n.eq_ignore_ascii_case("setup.exe"), extra.is_match(&n), n.len())
+    });
+    found.into_iter().next()
 }
 
 fn words(s: &str) -> Vec<String> {
@@ -96,6 +104,13 @@ mod tests {
         assert!(c.iter().all(|x| !x.path.to_string_lossy().contains("vcredist")));
         assert!(is_wine_dir(Path::new("/x/pfx/drive_c/Program Files (x86)/Steam/steam.exe")));
         assert!(!is_wine_dir(Path::new("/x/pfx/drive_c/Games/Skate Story/SkateStory.exe")));
+        let g = d.join("gog"); std::fs::create_dir_all(&g).unwrap();
+        for f in ["setup_pacific_drive_1.2.3_(64bit).exe", "setup_pacific_drive_dlc_1.2.3.exe", "setup_pacific_drive_1.2.3_(64bit)-1.bin"] { std::fs::write(g.join(f), b"MZ").unwrap(); }
+        assert_eq!(find_setup(&g).unwrap().file_name().unwrap(), "setup_pacific_drive_1.2.3_(64bit).exe");
+        for f in std::fs::read_dir(&g).unwrap().flatten() { std::fs::remove_file(f.path()).unwrap(); }
+        for f in ["setup_ghostrunner_2_1.0.exe", "setup_ghostrunner_2_soundtrack_1.0.exe"] { std::fs::write(g.join(f), b"MZ").unwrap(); }
+        assert_eq!(find_setup(&g).unwrap().file_name().unwrap(), "setup_ghostrunner_2_1.0.exe");
+        std::fs::remove_dir_all(&g).unwrap();
         std::fs::write(d.join("setup.exe"), b"MZ").unwrap();
         assert!(find_setup(&d).is_some());
         std::fs::remove_dir_all(d).unwrap();
