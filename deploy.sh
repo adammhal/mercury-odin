@@ -27,5 +27,7 @@ if [ "$WHAT" = plugin ] || [ "$WHAT" = all ]; then
     cp dist/index.js $T/dist/
     cp ~/mercury/src/mercuryd/target/release/mercuryd $T/bin/mercuryd.new
     mv -f $T/bin/mercuryd.new $T/bin/mercuryd
-    echo installed to $T'
+    echo installed to $T
+    # The copies above trigger Decky reloads (and engine restarts); wait until the new engine answers.
+    for i in $(seq 1 30); do sleep 1; curl -s -m 2 127.0.0.1:47800/status >/dev/null && { echo "engine up after ${i}s"; break; }; done'
 fi
