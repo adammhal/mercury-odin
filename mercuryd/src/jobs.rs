@@ -38,6 +38,8 @@ pub struct Job {
     #[serde(default)] pub shortcut_id: Option<u32>,
     /// When the installer was last started (Unix seconds). Only files created after it can be the game.
     #[serde(default)] pub setup_started: Option<u64>,
+    /// Set when this job replaces the files of an installed game (keeping its shortcut and Proton prefix).
+    #[serde(default)] pub update_of: Option<u32>,
     #[serde(default)] pub cache_progress: f64,
     #[serde(default)] pub done: u64,
     #[serde(default)] pub total: u64,
@@ -58,6 +60,8 @@ pub struct Entry {
     pub installed: u64,
     /// A repack's setup files, kept until the user deletes them.
     #[serde(default)] pub installer_dir: Option<PathBuf>,
+    /// Release name of the source it came from, for update checks.
+    #[serde(default)] pub source_name: Option<String>,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -73,6 +77,24 @@ pub struct Manager {
     pub cfg: Arc<Mutex<Config>>,
 }
 
+/// Move every file under `from` to the same place under `to`, replacing what is there. Returns the file count.
+fn overlay(from: &std::path::Path, to: &std::path::Path) -> Result<usize> {
+    let mut n = 0;
+    std::fs::create_dir_all(to)?;
+    for e in std::fs::read_dir(from)?.flatten() {
+        let (src, dst) = (e.path(), to.join(e.file_name()));
+        if src.is_dir() {
+            if dst.exists() && !dst.is_dir() { std::fs::remove_file(&dst)?; }
+            n += overlay(&src, &dst)?;
+        } else {
+            if dst.is_dir() { std::fs::remove_dir_all(&dst)?; }
+            if std::fs::rename(&src, &dst).is_err() { std::fs::copy(&src, &dst)?; }
+            n += 1;
+        }
+    }
+    Ok(n)
+}
+
 fn now() -> u64 { std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0) }
 fn state_path() -> PathBuf { data_dir().join("state.json") }
 
@@ -84,6 +106,14 @@ fn slug(s: &str) -> String {
 impl Manager {
     pub fn new(http: reqwest::Client, cfg: Arc<Mutex<Config>>) -> Arc<Self> {
         let mut saved: Saved = std::fs::read(state_path()).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+        // Games installed before versions were recorded: take source name and version from their finished job.
+        let done: Vec<(u32, Source)> = saved.jobs.iter().filter(|j| j.state == State::Done).map(|j| (j.appid, j.source.clone())).collect();
+        for e in saved.library.iter_mut().filter(|e| e.source_name.is_none()) {
+            if let Some((_, src)) = done.iter().rev().find(|(a, _)| *a == e.appid) {
+                e.source_name = Some(src.name.clone());
+                if e.version.is_none() { e.version = src.version.clone().or_else(|| crate::sources::version_in(&src.name)); }
+            }
+        }
         // Anything interrupted by a restart waits for the user rather than resuming on its own.
         for j in saved.jobs.iter_mut() {
             if matches!(j.state, State::Resolving | State::Caching | State::Downloading | State::Extracting) {
@@ -131,16 +161,24 @@ impl Manager {
 
     pub fn library(&self) -> Vec<Entry> { self.saved.lock().unwrap().library.clone() }
 
-    pub fn enqueue(&self, appid: u32, name: String, source: Source, local_files: Vec<PathBuf>) -> Result<Job> {
+    pub fn enqueue(&self, appid: u32, name: String, source: Source, local_files: Vec<PathBuf>, update: bool) -> Result<Job> {
         let mut s = self.saved.lock().unwrap();
         if s.jobs.iter().any(|j| j.appid == appid && j.state.active()) {
             bail!("{name} is already in the queue");
         }
+        let installed = s.library.iter().find(|e| e.appid == appid).cloned();
+        if update && installed.is_none() { bail!("{name} is not installed, so there is nothing to update"); }
+        if !update && installed.is_some() { bail!("{name} is already installed. Use Update to replace its files."); }
         s.next_id += 1;
         let job = Job { id: s.next_id, appid, name, source, state: State::Queued, error: None, torrent_id: None, links: vec![], local_files: vec![], dir: None,
-            setup_exe: None, exe: None, candidates: vec![], shortcut_id: None, setup_started: None, cache_progress: 0.0, done: 0, total: 0, speed: 0, created: now() };
+            setup_exe: None, exe: None, candidates: vec![], shortcut_id: None, setup_started: None, update_of: None, cache_progress: 0.0, done: 0, total: 0, speed: 0, created: now() };
         let mut job = job;
         job.local_files = local_files;
+        if let Some(e) = installed.filter(|_| update) {
+            job.update_of = Some(appid);
+            // Reuse the game's shortcut: same Steam entry, same Proton prefix, so saves and settings stay.
+            job.shortcut_id = Some(e.shortcut_id);
+        }
         s.jobs.push(job.clone());
         self.save(&s);
         drop(s);
@@ -214,10 +252,17 @@ impl Manager {
         let job = self.get(id).ok_or_else(|| anyhow!("no such job"))?;
         let exe = exe.or(job.exe.clone()).ok_or_else(|| anyhow!("no exe"))?;
         let repack = job.setup_exe.is_some();
-        let dir = if repack { exe.parent().map(|p| p.to_path_buf()).unwrap_or_default() } else { job.dir.clone().unwrap_or_default() };
+        let old = self.saved.lock().unwrap().library.iter().find(|e| e.appid == job.appid).cloned();
+        let dir = match (&old, repack) {
+            (Some(e), _) if job.update_of.is_some() => e.dir.clone(),
+            (_, true) => exe.parent().map(|p| p.to_path_buf()).unwrap_or_default(),
+            _ => job.dir.clone().unwrap_or_default(),
+        };
+        let version = job.source.version.clone().or_else(|| crate::sources::version_in(&job.source.name));
         let entry = Entry { appid: job.appid, name: job.name.clone(), size: storage::dir_size(&dir), dir, exe: exe.clone(), shortcut_id,
-            provider: job.source.provider.clone(), version: job.source.version.clone(), installed: now(),
-            installer_dir: if repack { job.dir.clone() } else { None } };
+            provider: job.source.provider.clone(), version, installed: now(),
+            installer_dir: if repack { job.dir.clone() } else { old.and_then(|e| e.installer_dir) },
+            source_name: Some(job.source.name.clone()) };
         {
             let mut s = self.saved.lock().unwrap();
             s.library.retain(|e| e.appid != job.appid);
@@ -276,6 +321,26 @@ impl Manager {
         let mut n = 0;
         for id in ids { if self.remove(id).await.is_ok() { n += 1; } }
         n
+    }
+
+    /// Copy the freshly extracted files over the installed game. The new game folder (the one holding its exe)
+    /// lands on the old game folder, so a layout change between releases does not leave a second copy.
+    async fn apply_update(&self, id: u64, appid: u32, staged: &std::path::Path) -> Result<()> {
+        let job = self.get(id).ok_or_else(|| anyhow!("job vanished"))?;
+        let entry = self.library().into_iter().find(|e| e.appid == appid).ok_or_else(|| anyhow!("{} is no longer installed", job.name))?;
+        let new_exe = install::find_game_exe(staged, &job.name).into_iter().find(|c| c.score > -500)
+            .ok_or_else(|| anyhow!("No game .exe in the new files; the installed game was not changed"))?.path;
+        let new_root = new_exe.parent().unwrap_or(staged).to_path_buf();
+        let old_root = entry.exe.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| entry.dir.clone());
+        let moved = tokio::task::spawn_blocking({
+            let (from, to) = (new_root.clone(), old_root.clone());
+            move || overlay(&from, &to)
+        }).await??;
+        tracing::info!("update {}: {moved} files replaced in {}", job.name, old_root.display());
+        let _ = tokio::fs::remove_dir_all(staged).await;
+        let exe = old_root.join(new_exe.strip_prefix(&new_root).unwrap_or(&new_exe));
+        self.update(id, |j| { j.dir = Some(entry.dir.clone()); j.exe = Some(exe.clone()); j.candidates = vec![exe.clone()]; j.state = State::Ready });
+        Ok(())
     }
 
     pub fn uninstall(&self, appid: u32) -> Result<Entry> {
@@ -429,11 +494,18 @@ impl Manager {
     async fn finish(&self, id: u64, cfg: &Config, rd: Option<&Rd>, dl_dir: &std::path::Path, extract: &extract::Permille) -> Result<()> {
         let job = self.get(id).ok_or_else(|| anyhow!("job vanished"))?;
         self.update(id, |j| j.state = State::Extracting);
-        let dir = cfg.games_dir.join(slug(&job.name));
+        // Updates extract next to the game first; the installed copy is untouched until this succeeds.
+        let dir = if job.update_of.is_some() { cfg.games_dir.join(".staging").join(id.to_string()) } else { cfg.games_dir.join(slug(&job.name)) };
         if dir.exists() { tokio::fs::remove_dir_all(&dir).await?; }
         extract::extract_all(dl_dir, &dir, Some(extract)).await?;
         let _ = tokio::fs::remove_dir_all(dl_dir).await;
         if let (Some(t), Some(rd)) = (&job.torrent_id, rd) { let _ = rd.delete(t).await; }
+
+        if let Some(appid) = job.update_of {
+            if install::find_setup(&dir).is_none() {
+                return self.apply_update(id, appid, &dir).await;
+            }
+        }
 
         if let Some(setup) = install::find_setup(&dir) {
             self.update(id, |j| { j.dir = Some(dir.clone()); j.setup_exe = Some(setup); j.state = State::NeedsSetup });

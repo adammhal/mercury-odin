@@ -8,11 +8,12 @@ export type JobState = "queued" | "resolving" | "caching" | "downloading" | "pau
 export type Job = {
   id: number; appid: number; name: string; source: Source; state: JobState; error?: string | null;
   dir?: string | null; setup_exe?: string | null; exe?: string | null; candidates: string[]; shortcut_id?: number | null;
-  cache_progress: number; done: number; total: number; speed: number; created: number;
+  cache_progress: number; done: number; total: number; speed: number; created: number; update_of?: number | null;
 };
+export type UpdateInfo = { current?: string | null; provider: string; newer?: { version: string; source: Source } | null };
 export type Availability = "cached" | "not_cached" | "blocked" | "unknown";
 export type LocalFile = { path: string; name: string; size: number; modified: number; finished: boolean; archive: boolean };
-export type Entry = { appid: number; name: string; dir: string; exe: string; shortcut_id: number; provider: string; size: number; version?: string | null; installed: number };
+export type Entry = { appid: number; name: string; dir: string; exe: string; shortcut_id: number; provider: string; size: number; version?: string | null; installed: number; source_name?: string | null };
 export type Status = { version: string; rd_key_set: boolean; unrar: boolean; installer_launch_options?: string | null; storage: { total: number; free: number; mercury: number } };
 export type Config = { browser_shortcut_id?: number | null; rd_key: string; rd_key_set: boolean; games_dir: string; downloads_dir: string; server_url: string; enable_steamrip: boolean; proton_tool: string; launch_options: string };
 
@@ -52,7 +53,9 @@ export const api = {
     req<{ sources: Source[]; installed_estimate: number[]; errors: string[] }>(`/sources?name=${encodeURIComponent(name)}${refresh ? "&refresh=true" : ""}`),
   cached: (magnets: string[]) => req<Record<string, Availability>>("/sources/cached", "POST", { magnets }),
   jobs: () => req<Job[]>("/jobs"),
-  install: (appid: number, name: string, source: Source, local_file?: string) => req<Job>("/jobs", "POST", { appid, name, source, local_file }),
+  install: (appid: number, name: string, source: Source, local_file?: string, update = false) =>
+    req<Job>("/jobs", "POST", { appid, name, source, local_file, update }),
+  updateCheck: (appid: number) => req<UpdateInfo>(`/library/${appid}/update`),
   browserDownloads: (since: number) => req<LocalFile[]>(`/browser/downloads?since=${since}`),
   act: (id: number, act: string, body?: object) => req<unknown>(`/jobs/${id}/${act}`, "POST", body ?? {}),
   clearJobs: () => req<{ cleared: number }>("/jobs/clear", "POST", {}),

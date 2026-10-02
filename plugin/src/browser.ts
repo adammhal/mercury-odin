@@ -6,7 +6,7 @@ declare const SteamClient: any;
 declare const appStore: any;
 
 /** A browser download Mercury is waiting for. Kept in localStorage so a plugin reload does not lose it. */
-export type Pending = { appid: number; name: string; source: Source; since: number; shortcut: number };
+export type Pending = { appid: number; name: string; source: Source; since: number; shortcut: number; update?: boolean };
 const KEY = "mercury.pendingBrowserDownload";
 export let pending: Pending | undefined = (() => {
   try { return JSON.parse(localStorage.getItem(KEY) ?? "null") ?? undefined; } catch { return undefined; }
@@ -34,7 +34,7 @@ async function browserShortcut(): Promise<number> {
 }
 
 /** Open the source's page in Firefox and wait for the user to download the file there. */
-export async function downloadInBrowser(appid: number, name: string, source: Source) {
+export async function downloadInBrowser(appid: number, name: string, source: Source, update = false) {
   const url = source.url ?? source.urls?.[0];
   // The URL lands in a Steam launch option, which Steam runs through /bin/sh.
   if (!url || !SAFE_URL.test(url)) throw new Error("This source has no usable link");
@@ -42,7 +42,7 @@ export async function downloadInBrowser(appid: number, name: string, source: Sou
   const gid = gameId(id);
   try { SteamClient.Apps.TerminateApp(gid, false); } catch { /* not running */ }
   SteamClient.Apps.SetShortcutLaunchOptions(id, `MOZ_ENABLE_WAYLAND=0 %command% "${url}"`);
-  setPending({ appid, name, source, since: Math.floor(Date.now() / 1000) - 5, shortcut: id });
+  setPending({ appid, name, source, since: Math.floor(Date.now() / 1000) - 5, shortcut: id, update });
   log("waiting for", name, "from", url);
   await new Promise((r) => setTimeout(r, 800));
   SteamClient.Apps.RunGame(gid, "", -1, 100);
@@ -69,7 +69,7 @@ export async function checkBrowserDownload() {
   if (prev !== pick.size || !pick.size) return;
   log("file finished:", pick.name, pick.size, "bytes; starting install");
   try {
-    await api.install(p.appid, p.name, p.source, pick.path);
+    await api.install(p.appid, p.name, p.source, pick.path, p.update ?? false);
   } catch (e: any) {
     failures++;
     log(`install request failed (attempt ${failures}):`, e.message);

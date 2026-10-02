@@ -1,5 +1,6 @@
 //! Game sources: Adam's Mercury server (FitGirl, OnlineFix, TorrentGames) and the SteamRIP feed.
 use crate::config::Config;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -27,6 +28,9 @@ pub struct Source {
     /// True for repacks that need their own installer (see `is_repack`).
     #[serde(default)]
     pub repack: bool,
+    /// The source said whether it is an installer, so `repack` is not a guess from the title.
+    #[serde(default, skip_serializing)]
+    pub declared: bool,
 }
 
 fn yes() -> bool { true }
@@ -50,6 +54,9 @@ struct ServerItem {
     url: Option<String>,
     #[serde(default)]
     provider: String,
+    /// "installer" | "game folder" | "unknown", from sources that know (Appnetica). Ranked on before title guesses.
+    #[serde(default)]
+    install: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -87,6 +94,25 @@ async fn rd_hosts(http: &reqwest::Client) -> Vec<String> {
         },
         Err(_) => vec![],
     }
+}
+
+/// Version mentioned in a release name: "v1.0.28324", "Build 10371237", "v20220422".
+pub fn version_in(name: &str) -> Option<String> {
+    let re = Regex::new(r"(?i)\b(v\d+(?:[._]\d+)*[a-z]?|build[ .]?\d{3,})\b").unwrap();
+    re.find(name).map(|m| m.as_str().to_string())
+}
+
+/// Numeric parts of a version, for comparing "v1.0.9" < "v1.0.10" and "Build 12" < "Build 13".
+pub fn version_key(v: &str) -> Vec<u64> {
+    Regex::new(r"\d+").unwrap().find_iter(v).filter_map(|m| m.as_str().parse().ok()).collect()
+}
+
+/// True when `candidate` is a newer version than `installed` of the same kind (both "Build" or both "v").
+pub fn is_newer(candidate: &str, installed: &str) -> bool {
+    let build = |s: &str| s.to_lowercase().contains("build");
+    if build(candidate) != build(installed) { return false; }
+    let (a, b) = (version_key(candidate), version_key(installed));
+    !a.is_empty() && !b.is_empty() && a > b
 }
 
 /// A version is short ("v1.0.3", "Build 10371237"). Anything else is scraped page text.
@@ -184,6 +210,7 @@ pub async fn search(http: &reqwest::Client, cfg: &Config, name: &str, refresh: b
         Ok(items) => {
             for i in items {
                 let score = similarity(name, &i.name);
+                let declared = i.install.as_deref().map(str::to_lowercase);
                 if score < 0.6 || (i.magnet.is_none() && i.url.is_none()) {
                     continue;
                 }
@@ -197,7 +224,8 @@ pub async fn search(http: &reqwest::Client, cfg: &Config, name: &str, refresh: b
                     version: None,
                     urls: vec![],
                     supported: true,
-                    repack: false,
+                    repack: declared.as_deref() == Some("installer"),
+                    declared: declared.as_deref().is_some_and(|d| d != "unknown"),
                 }));
             }
         }
@@ -223,11 +251,12 @@ pub async fn search(http: &reqwest::Client, cfg: &Config, name: &str, refresh: b
                 urls,
                 supported,
                 repack: false,
+                declared: false,
             }));
         }
     }
     // Best match first; sources that cannot be downloaded go to the bottom.
-    for (_, src) in out.iter_mut() { src.repack = is_repack(&src.provider, &src.name); }
+    for (_, src) in out.iter_mut() { if !src.declared { src.repack = is_repack(&src.provider, &src.name); } }
     out.sort_by(|a, b| b.1.supported.cmp(&a.1.supported).then(a.1.repack.cmp(&b.1.repack)).then(b.0.partial_cmp(&a.0).unwrap()));
     (out.into_iter().map(|(_, s)| s).collect(), errors)
 }
@@ -240,6 +269,16 @@ mod tests {
         assert_eq!(parse_size("1.5 GB"), (1.5 * (1u64 << 30) as f64) as u64);
         assert_eq!(parse_size("814 MB"), 814 << 20);
         assert_eq!(parse_size("N/A"), 0);
+    }
+    #[test]
+    fn versions() {
+        assert_eq!(version_in("Hollow Knight: Silksong Free Download (v1.0.28324)").as_deref(), Some("v1.0.28324"));
+        assert_eq!(version_in("TUNIC Free Download (Build 10371237)").as_deref(), Some("Build 10371237"));
+        assert_eq!(version_in("Plateup Online"), None);
+        assert!(is_newer("v1.0.30000", "v1.0.28324"));
+        assert!(is_newer("v1.0.10", "v1.0.9"));
+        assert!(!is_newer("v1.0.28324", "v1.0.28324"));
+        assert!(!is_newer("Build 99", "v1.2"));
     }
     #[test]
     fn repacks() {

@@ -104,9 +104,9 @@ async fn rd_cached(State(a): State<App>, Json(b): Json<Magnets>) -> R {
 async fn list_jobs(State(a): State<App>) -> R { Ok(Json(json!(a.m.jobs()))) }
 
 #[derive(Deserialize)]
-struct NewJob { appid: u32, name: String, source: sources::Source, #[serde(default)] local_file: Option<std::path::PathBuf> }
+struct NewJob { appid: u32, name: String, source: sources::Source, #[serde(default)] local_file: Option<std::path::PathBuf>, #[serde(default)] update: bool }
 async fn new_job(State(a): State<App>, Json(j): Json<NewJob>) -> R {
-    tracing::info!("new job: {} ({}) from {}{}", j.name, j.appid, j.source.provider,
+    tracing::info!("new {}: {} ({}) from {}{}", if j.update { "update" } else { "job" }, j.name, j.appid, j.source.provider,
         j.local_file.as_ref().map(|f| format!(", local file {}", f.display())).unwrap_or_default());
     let files = match &j.local_file {
         Some(f) => {
@@ -118,7 +118,7 @@ async fn new_job(State(a): State<App>, Json(j): Json<NewJob>) -> R {
         }
         None => vec![],
     };
-    Ok(Json(json!(a.m.enqueue(j.appid, j.name, j.source, files)?)))
+    Ok(Json(json!(a.m.enqueue(j.appid, j.name, j.source, files, j.update)?)))
 }
 
 #[derive(Deserialize)]
@@ -144,6 +144,29 @@ async fn job_action(State(a): State<App>, Path((id, act)): Path<(u64, String)>, 
 }
 
 async fn clear_jobs(State(a): State<App>) -> R { Ok(Json(json!({ "cleared": a.m.clear_finished().await }))) }
+
+/// Newer release of an installed game among its current sources, if any. Cached for six hours per game.
+async fn update_check(State(a): State<App>, Path(appid): Path<u32>) -> R {
+    use std::collections::HashMap;
+    use std::sync::Mutex as M;
+    static SEEN: M<Option<HashMap<u32, (std::time::Instant, Value)>>> = M::new(None);
+    if let Some((t, v)) = SEEN.lock().unwrap().get_or_insert_with(HashMap::new).get(&appid) {
+        if t.elapsed() < std::time::Duration::from_secs(6 * 3600) { return Ok(Json(v.clone())); }
+    }
+    let e = a.m.library().into_iter().find(|e| e.appid == appid).ok_or_else(|| anyhow::anyhow!("not installed"))?;
+    let current = e.version.clone().or_else(|| e.source_name.as_deref().and_then(sources::version_in));
+    let (list, _) = sources::search(&a.m.http, &cfg(&a), &e.name, false).await;
+    let newest = current.as_ref().and_then(|cur| {
+        list.iter().filter(|s| s.supported)
+            .filter_map(|s| s.version.clone().or_else(|| sources::version_in(&s.name)).map(|v| (v, s)))
+            .filter(|(v, _)| sources::is_newer(v, cur))
+            .max_by(|(a, _), (b, _)| sources::version_key(a).cmp(&sources::version_key(b)))
+            .map(|(v, s)| json!({ "version": v, "source": s }))
+    });
+    let v = json!({ "current": current, "provider": e.provider, "newer": newest });
+    SEEN.lock().unwrap().get_or_insert_with(HashMap::new).insert(appid, (std::time::Instant::now(), v.clone()));
+    Ok(Json(v))
+}
 
 async fn library(State(a): State<App>) -> R { Ok(Json(json!(a.m.library()))) }
 async fn uninstall(State(a): State<App>, Path(id): Path<u32>) -> R { Ok(Json(json!(a.m.uninstall(id)?))) }
@@ -175,6 +198,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/jobs/{id}/{act}", post(job_action))
         .route("/library", get(library))
         .route("/library/{appid}/uninstall", post(uninstall))
+        .route("/library/{appid}/update", get(update_check))
         .route("/library/{appid}/installer-files", get(installer_files).delete(delete_installer_files))
         .with_state(App { m });
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", PORT)).await?;

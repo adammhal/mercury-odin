@@ -96,18 +96,31 @@ fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// If a folder holds exactly one directory and nothing else, lift its contents up one level.
+/// Release clutter that sits beside the game folder (SteamRIP adds a readme, a link and the redistributables).
+fn is_clutter(p: &Path) -> bool {
+    let n = p.file_name().and_then(|n| n.to_str()).unwrap_or("").to_lowercase();
+    if p.is_dir() { return n == "_commonredist" || n == "redist" || n == "_redist"; }
+    [".txt", ".url", ".nfo", ".html", ".htm", ".lnk", ".diz", ".jpg", ".png"].iter().any(|e| n.ends_with(e))
+}
+
+/// If a folder holds one directory (plus release clutter), lift that directory's contents up one level.
+/// SteamRIP's `Game/Game/Game.exe` becomes `Game/Game.exe`. Two real folders (OnlineFix's game + "Fix Repair")
+/// are left alone.
 fn flatten(dir: &Path) -> Result<()> {
     loop {
-        let items: Vec<_> = std::fs::read_dir(dir)?.flatten().collect();
-        if items.len() != 1 || !items[0].path().is_dir() {
+        let items: Vec<_> = std::fs::read_dir(dir)?.flatten().map(|e| e.path()).collect();
+        let dirs: Vec<&PathBuf> = items.iter().filter(|p| p.is_dir() && !is_clutter(p)).collect();
+        if dirs.len() != 1 || items.iter().any(|p| !p.is_dir() && !is_clutter(p)) {
             return Ok(());
         }
-        let inner = items[0].path();
+        let inner = dirs[0].clone();
         let tmp = dir.join(".mercury_flatten");
         std::fs::rename(&inner, &tmp)?;
         for e in std::fs::read_dir(&tmp)?.flatten() {
-            std::fs::rename(e.path(), dir.join(e.file_name()))?;
+            let to = dir.join(e.file_name());
+            // A clutter file with the same name as a game file loses; the game's copy wins.
+            if to.exists() && !to.is_dir() { std::fs::remove_file(&to)?; }
+            std::fs::rename(e.path(), to)?;
         }
         std::fs::remove_dir(&tmp)?;
     }
@@ -173,6 +186,22 @@ mod tests {
         extract_all(&src, &dest, Some(&p)).await.unwrap();
         assert_eq!(p.load(Ordering::Relaxed), 1000, "progress reaches 100%");
         assert!(dest.join("bin/game.exe").exists(), "single top folder is flattened");
+
+        // SteamRIP layout: game folder beside a readme, a .url and _CommonRedist.
+        let rip = root.join("rip");
+        std::fs::create_dir_all(rip.join("Game/Data")).unwrap();
+        std::fs::create_dir_all(rip.join("_CommonRedist")).unwrap();
+        std::fs::write(rip.join("Game/Game.exe"), b"MZ").unwrap();
+        std::fs::write(rip.join("Read_Me_Instructions.txt"), b"x").unwrap();
+        std::fs::write(rip.join("STEAMRIP.url"), b"x").unwrap();
+        flatten(&rip).unwrap();
+        assert!(rip.join("Game.exe").exists() && rip.join("Data").is_dir(), "game folder lifted beside clutter");
+        // Two real folders stay as they are.
+        let ofx = root.join("ofx");
+        std::fs::create_dir_all(ofx.join("Game")).unwrap();
+        std::fs::create_dir_all(ofx.join("Fix Repair")).unwrap();
+        flatten(&ofx).unwrap();
+        assert!(ofx.join("Game").is_dir() && ofx.join("Fix Repair").is_dir());
         assert!(dest.join("fix.dll").exists(), "password-protected inner archive is extracted");
         assert!(!dest.join("Fix.7z").exists());
         std::fs::remove_dir_all(root).unwrap();

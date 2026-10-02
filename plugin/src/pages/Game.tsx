@@ -34,6 +34,20 @@ export function Game() {
   const job = jobs?.find((j) => j.appid === appid && !["done", "cancelled"].includes(j.state));
   const free = status?.storage.free ?? 0;
 
+  const [update] = useOnce(() => (entry ? api.updateCheck(appid) : Promise.resolve(undefined)), [entry?.appid, entry?.installed]);
+
+  /** Replace the installed game's files with a release from `s`. Keeps the shortcut, Proton prefix and saves. */
+  const startUpdate = (s: Source, via?: () => Promise<void>) => showModal(<ConfirmModal strTitle={`Update ${app?.name}?`} strOKButtonText="Update"
+    strDescription={`${s.provider} · ${s.name}\n\nMercury downloads this release, then copies its files over the installed game. Your saves, Steam shortcut, Proton choice and frame generation stay. If the download or extraction fails, the installed game is not touched.`}
+    onOK={async () => {
+      setBusy(true);
+      try {
+        if (via) await via();
+        else { await api.install(appid, app!.name, s, undefined, true); toaster.toast({ title: "Mercury", body: `Updating ${app!.name}` }); }
+      } catch (e: any) { toaster.toast({ title: "Mercury", body: e.message }); }
+      setBusy(false);
+    }} />);
+
   const install = (s: Source, est: number) => {
     const need = s.size_bytes + est;
     const go = async () => {
@@ -81,6 +95,17 @@ export function Game() {
           </Focusable>
         )}
 
+        {entry && update?.newer && !job && (
+          <Focusable flow-children="horizontal" style={{ display: "flex", alignItems: "center", gap: 12, background: "rgba(112,214,29,.12)", border: "1px solid rgba(112,214,29,.35)", borderRadius: 6, padding: "8px 12px", marginBottom: 14 }}>
+            <div style={{ flex: 1, fontSize: 13 }}>
+              <b style={{ color: C.ok }}>Update available:</b> {update.newer.version} from {update.newer.source.provider}
+              <span style={{ color: C.dim }}> · installed {update.current ?? "unknown version"}</span>
+            </div>
+            <Btn style={{ height: 30, background: "linear-gradient(90deg,#70d61d,#01a75b)" }}
+              onClick={() => { const s = update.newer!.source; startUpdate(s, s.supported === false ? () => downloadInBrowser(appid, app!.name, s, true) : undefined); }}>Update</Btn>
+          </Focusable>
+        )}
+        {entry && <div style={{ color: C.dim, fontSize: 12, marginBottom: 6 }}>Pick any source below to update or reinstall from it.</div>}
         {job && <div style={{ background: C.panel, borderRadius: 6, padding: "10px 16px", marginBottom: 18 }}>
           <JobProgress job={job} label="In your downloads" />
           <Btn style={{ width: 160, marginTop: 6 }} onClick={() => Navigation.Navigate("/mercury/downloads")}>Open downloads</Btn>
@@ -104,7 +129,11 @@ export function Game() {
             const blocked = s.supported === false;
             return (
               <Focusable key={`${s.provider}-${i}`} autoFocus={i === 0 && !entry} focusClassName={FOCUS} noFocusRing onFocus={scrollIntoView}
-                onActivate={() => !busy && !job && (blocked ? viaBrowser(s) : install(s, est))}
+                onActivate={() => {
+                  if (busy || job) return;
+                  if (entry) return startUpdate(s, blocked ? () => downloadInBrowser(appid, app!.name, s, true) : undefined);
+                  return blocked ? viaBrowser(s) : install(s, est);
+                }}
                 style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", alignItems: "center", gap: 12, minHeight: 44,
                   padding: "6px 12px", borderRadius: 5, marginBottom: 6, background: C.panel, opacity: 1 }}>
                 <div style={{ minWidth: 0 }}>

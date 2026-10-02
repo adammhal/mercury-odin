@@ -28,10 +28,17 @@ fn walk(dir: &Path, depth: usize, out: &mut Vec<(PathBuf, usize)>) {
 }
 
 /// A repack (FitGirl, DODI, ...) ships `setup.exe` at the top with data files, not a playable game.
+/// GOG offline installers are `setup_<game>_<version>.exe`, often beside `setup_..-1.bin` parts.
 pub fn find_setup(dir: &Path) -> Option<PathBuf> {
-    std::fs::read_dir(dir).ok()?.flatten().map(|e| e.path()).find(|p| {
-        p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.eq_ignore_ascii_case("setup.exe"))
-    })
+    let files: Vec<PathBuf> = std::fs::read_dir(dir).ok()?.flatten().map(|e| e.path()).filter(|p| p.is_file()).collect();
+    let name = |p: &PathBuf| p.file_name().and_then(|n| n.to_str()).unwrap_or("").to_lowercase();
+    if let Some(p) = files.iter().find(|p| name(p) == "setup.exe") { return Some(p.clone()); }
+    let gog: Vec<&PathBuf> = files.iter().filter(|p| { let n = name(p); n.starts_with("setup_") && n.ends_with(".exe") }).collect();
+    // With several, take the one whose .bin parts are present.
+    gog.iter().find(|p| {
+        let stem = name(p).trim_end_matches(".exe").to_string();
+        files.iter().any(|f| { let n = name(f); n.starts_with(&stem) && n.ends_with(".bin") })
+    }).or(gog.first()).map(|p| (*p).clone())
 }
 
 fn words(s: &str) -> Vec<String> {
@@ -98,6 +105,12 @@ mod tests {
         assert!(!is_wine_dir(Path::new("/x/pfx/drive_c/Games/Skate Story/SkateStory.exe")));
         std::fs::write(d.join("setup.exe"), b"MZ").unwrap();
         assert!(find_setup(&d).is_some());
+        let g = d.join("gog");
+        std::fs::create_dir_all(&g).unwrap();
+        for f in ["setup_core_keeper_1.3.0.4_(64bit)_(94213).exe", "setup_core_keeper_1.3.0.4_(64bit)_(94213)-1.bin", "readme.txt"] {
+            std::fs::write(g.join(f), b"MZ").unwrap();
+        }
+        assert!(find_setup(&g).unwrap().to_string_lossy().ends_with("(94213).exe"), "GOG installer recognised");
         std::fs::remove_dir_all(d).unwrap();
     }
 }

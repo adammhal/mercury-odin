@@ -13,6 +13,7 @@ import { Settings } from "./pages/Settings";
 import { addToSteam, onAppExit } from "./steam";
 import { checkBrowserDownload } from "./browser";
 import { stopStoreButton, tickStoreButton } from "./storeButton";
+import { patchLibraryPage } from "./libraryBadge";
 
 const ROUTES: [string, FC][] = [
   ["/mercury", Home], ["/mercury/game/:appid", Game], ["/mercury/downloads", Downloads],
@@ -61,6 +62,7 @@ function startWatcher() {
 
 export default definePlugin(() => {
   for (const [path, C] of ROUTES) routerHook.addRoute(path, C, { exact: true });
+  const libraryPatch = patchLibraryPage();
   const stop = startWatcher();
   return {
     name: "Mercury",
@@ -70,6 +72,7 @@ export default definePlugin(() => {
     onDismount() {
       stop();
       for (const [path] of ROUTES) routerHook.removeRoute(path);
+      routerHook.removePatch("/library/app/:appid", libraryPatch);
     },
   };
 });
