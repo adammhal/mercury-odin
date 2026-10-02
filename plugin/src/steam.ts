@@ -51,9 +51,13 @@ export async function runInstaller(job: Job): Promise<number> {
     SteamClient.Apps.SetShortcutName(id, `${job.name} (installer)`);
     await SteamClient.Apps.SpecifyCompatTool(id, cfg.proton_tool);
   }
-  // No frame-generation wrapper for an installer. PROTON_LOG writes ~/steam-<gameid>.log; +file records every path
-  // the installer opens, which is what a "path not found" needs.
-  SteamClient.Apps.SetShortcutLaunchOptions(id, "PROTON_LOG=1 WINEDEBUG=+timestamp,+pid,+tid,+seh,+loaddll,+file /usr/libexec/armada/armada-game-launch %command%");
+  // Installers need full x87 precision under FEX (see installer_fex_config in mercuryd), and get Proton's
+  // default log in ~/steam-<gameid>.log. No frame-generation wrapper.
+  // Inno Setup otherwise defaults (or "remembers") Z:\Games\..., and Z: is Armada's read-only root. The
+  // decompressors then cannot write their temp files and the install hangs at 0.3%.
+  const { installer_launch_options } = await api.status();
+  const folder = job.name.replace(/[^A-Za-z0-9 \-]/g, " ").replace(/\s+/g, " ").trim() || "Game";
+  SteamClient.Apps.SetShortcutLaunchOptions(id, `${installer_launch_options ?? "PROTON_LOG=1 %command%"} "/DIR=C:\\Games\\${folder}"`);
   await api.act(job.id, "setup-launched", { shortcut_id: id });
   SteamClient.Apps.RunGame(gameId(id), "", -1, 100);
   return id;

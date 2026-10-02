@@ -35,6 +35,9 @@ async fn status(State(a): State<App>) -> R {
         "version": env!("CARGO_PKG_VERSION"),
         "rd_key_set": !c.rd_key.is_empty(),
         "unrar": extract::unrar_path().exists(),
+        // Launch options for repack installers: full x87 precision, Proton's default log, no Armada wrapper
+        // (the wrapper would replace FEX_APP_CONFIG with its own).
+        "installer_launch_options": install::installer_fex_config().ok().map(|p| format!("PROTON_LOG=1 FEX_APP_CONFIG={} %command%", p.display())),
         "storage": { "total": s.total, "free": s.free, "mercury": mercury },
     })))
 }

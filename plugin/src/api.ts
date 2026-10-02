@@ -11,7 +11,7 @@ export type Job = {
   cache_progress: number; done: number; total: number; speed: number; created: number;
 };
 export type Entry = { appid: number; name: string; dir: string; exe: string; shortcut_id: number; provider: string; size: number; version?: string | null; installed: number };
-export type Status = { version: string; rd_key_set: boolean; unrar: boolean; storage: { total: number; free: number; mercury: number } };
+export type Status = { version: string; rd_key_set: boolean; unrar: boolean; installer_launch_options?: string | null; storage: { total: number; free: number; mercury: number } };
 export type Config = { rd_key: string; rd_key_set: boolean; games_dir: string; downloads_dir: string; server_url: string; enable_steamrip: boolean; proton_tool: string; launch_options: string };
 
 async function req<T>(path: string, method = "GET", body?: unknown): Promise<T> {

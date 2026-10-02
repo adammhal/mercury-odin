@@ -101,3 +101,27 @@ mod tests {
         std::fs::remove_dir_all(d).unwrap();
     }
 }
+
+/// FEX config for running repack installers (32-bit Inno Setup under FEX's WoW64 backend).
+/// Armada's default profile sets X87ReducedPrecision=1. Delphi's Move copies 8 bytes through the x87
+/// stack, so reduced precision corrupts strings: the installer opened `X:\\var\\homd\\arlada\\...`
+/// instead of its own path and failed with "path not found". Everything else stays at Armada's defaults.
+pub fn installer_fex_config() -> anyhow::Result<std::path::PathBuf> {
+    use serde_json::{Value, json};
+    let read = |p: &str| std::fs::read(p).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok());
+    let mut cfg = read("/usr/share/fex-emu/Config.json").unwrap_or_else(|| json!({ "Config": {} }));
+    if let Some(c) = cfg["Config"].as_object_mut() {
+        // Each Proton's FEX resolves these itself; Armada's values break it (see armada-game-launch).
+        for k in ["RootFS", "ThunkGuestLibs", "ThunkHostLibs"] { c.remove(k); }
+        if let Some(Value::Object(d)) = read("/usr/share/armada/fex-profiles.json").map(|v| v["profiles"]["default"]["config"].clone()) {
+            c.extend(d);
+        }
+        c.insert("X87ReducedPrecision".into(), json!("0"));
+    }
+    // pressure-vessel shares ~/.cache into the container, so FEX can see the file there.
+    let dir = crate::config::home().join(".cache/mercury-fex");
+    std::fs::create_dir_all(&dir)?;
+    let path = dir.join("installer.json");
+    std::fs::write(&path, serde_json::to_vec_pretty(&cfg)?)?;
+    Ok(path)
+}
