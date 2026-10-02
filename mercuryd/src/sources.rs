@@ -57,6 +57,9 @@ struct ServerItem {
     /// "installer" | "game folder" | "unknown", from sources that know (Appnetica). Ranked on before title guesses.
     #[serde(default)]
     install: Option<String>,
+    /// Release version when the source knows it (Appnetica: "1.3.0.4-3dee (94213)", sometimes "N/A").
+    #[serde(default)]
+    version: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -122,7 +125,8 @@ pub fn clean_version(v: &str) -> Option<String> {
         if let Some(i) = v.find(sep) { v.truncate(i); }
     }
     let lower = v.to_lowercase();
-    let shaped = lower.starts_with('v') || lower.starts_with("build") || lower.starts_with("b.") || v.contains('.');
+    let shaped = lower.starts_with('v') || lower.starts_with("build") || lower.starts_with("b.") || v.contains('.')
+        || (v.contains('_') && v.chars().all(|c| c.is_ascii_digit() || c == '_'));
     let ok = shaped && v.chars().count() <= 24 && v.chars().any(|c| c.is_ascii_digit());
     ok.then_some(v)
 }
@@ -214,6 +218,11 @@ pub async fn search(http: &reqwest::Client, cfg: &Config, name: &str, refresh: b
                 if score < 0.6 || (i.magnet.is_none() && i.url.is_none()) {
                     continue;
                 }
+                // Appnetica's mail.ru releases carry a share-page `url` that neither Real-Debrid nor a plain GET
+                // can download (their direct `files` are not supported yet), so only its torrents are offered.
+                if i.provider.eq_ignore_ascii_case("appnetica") && i.magnet.is_none() {
+                    continue;
+                }
                 out.push((score, Source {
                     size_bytes: parse_size(&i.size),
                     size: i.size,
@@ -221,7 +230,7 @@ pub async fn search(http: &reqwest::Client, cfg: &Config, name: &str, refresh: b
                     provider: if i.provider.is_empty() { "Server".into() } else { i.provider },
                     magnet: i.magnet,
                     url: i.url,
-                    version: None,
+                    version: i.version.as_deref().and_then(clean_version),
                     urls: vec![],
                     supported: true,
                     repack: declared.as_deref() == Some("installer"),
@@ -299,6 +308,12 @@ mod tests {
         assert_eq!(clean_version("Build 10371237").as_deref(), Some("Build 10371237"));
         assert_eq!(clean_version("1.0.28324").as_deref(), Some("1.0.28324"));
         assert_eq!(clean_version("Build 1286980 + Multiplayer").as_deref(), Some("Build 1286980"));
+        // Appnetica's version field.
+        assert_eq!(clean_version("1.3.0.4-3dee (94213)").as_deref(), Some("1.3.0.4-3dee"));
+        assert_eq!(clean_version("N/A"), None);
+        assert_eq!(clean_version("1_3_5_36554_32842").as_deref(), Some("1_3_5_36554_32842"));
+        assert_eq!(clean_version("1.0.0.14-34ff (в меню) / build 16065825 (SteamDB) от 18 октября 2024").as_deref(), Some("1.0.0.14-34ff"));
+        assert!(is_newer("1.3.0.5", "1.3.0.4-3dee"));
     }
     #[test]
     fn matching() {
