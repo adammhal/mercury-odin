@@ -31,6 +31,28 @@ Mac. You can also type it in Mercury > Settings on the device.
    Proton. When the installer closes, `mercuryd` finds the game inside that shortcut's prefix and the
    plugin repoints the same shortcut at it.
 
+## Importing games installed elsewhere
+
+Repacks do not install on the Odin (FEX's 32-bit emulation spins in FitGirl's unpacker), so install them on a PC
+and carry the finished game folder over:
+
+- **SSH / network:** copy the folder (or a .zip/.rar/.7z of it) into `~/Games/Import`, for example with
+  `scp -r "Game Folder" armada@<odin>:Games/Import/` or WinSCP on Windows.
+- **microSD card:** put it on the card. Armada auto-mounts only ext4 cards; for a Windows-formatted (exFAT, NTFS)
+  card, Mercury's Import page offers **Mount card**. Games on the card can stay there.
+- **Downloads:** folders and archives in `~/Downloads` are listed too.
+
+Then Mercury > Library > **Import a game**, pick it, match the Steam game, and import. It gets art, an icon,
+Proton, the frame-generation launch option, and a Steam shortcut like any other install.
+
+## Other behaviour worth knowing
+
+- **Updates:** choose any source on an installed game's page. The release is staged first; only then are its
+  files moved over the installed game, keeping the same Steam shortcut and Proton prefix.
+- **Removed in Steam:** Mercury notices a deleted shortcut and offers Add back or Delete files in Library.
+- **Two jobs at once** (`parallel_jobs` in `~/.local/share/mercury/config.json`).
+- **Logs:** `~/.local/share/mercury/mercuryd.log` (engine), `[Mercury]` lines in `~/.local/share/Steam/logs/cef_log.txt` (plugin).
+
 ## Device facts this depends on
 
 - Big Picture renders pages in a 910x512 CSS viewport (2.11x). Size layouts for that.
