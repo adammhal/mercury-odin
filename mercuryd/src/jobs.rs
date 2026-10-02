@@ -361,6 +361,19 @@ impl Manager {
         Ok(())
     }
 
+    /// Record a game the user already has as a Steam shortcut, without touching the shortcut (its art, launch
+    /// options and Proton prefix, which holds the saves, stay as they are).
+    pub fn adopt(&self, mut e: Entry) -> Result<Entry> {
+        let mut s = self.saved.lock().unwrap();
+        if s.library.iter().any(|x| x.appid == e.appid) { bail!("{} is already in Mercury's library", e.name); }
+        if !e.exe.is_file() { bail!("{} does not exist", e.exe.display()); }
+        e.size = storage::dir_size(&e.dir);
+        e.installed = now();
+        s.library.push(e.clone());
+        self.save(&s);
+        Ok(e)
+    }
+
     /// The game's Steam shortcut was re-created (after the user removed it in Steam).
     pub fn set_shortcut(&self, appid: u32, shortcut_id: u32) -> Result<Entry> {
         let mut s = self.saved.lock().unwrap();

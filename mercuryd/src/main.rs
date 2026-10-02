@@ -202,6 +202,16 @@ async fn import_game(State(a): State<App>, Json(b): Json<ImportBody>) -> R {
 async fn library(State(a): State<App>) -> R { Ok(Json(json!(a.m.library()))) }
 
 #[derive(Deserialize)]
+struct AdoptBody { appid: u32, name: String, dir: std::path::PathBuf, exe: std::path::PathBuf, shortcut_id: u32, #[serde(default)] provider: Option<String>, #[serde(default)] version: Option<String> }
+async fn adopt(State(a): State<App>, Json(b): Json<AdoptBody>) -> R {
+    if !b.exe.starts_with(&b.dir) { return Err(anyhow::anyhow!("exe must be inside dir").into()); }
+    let e = jobs::Entry { appid: b.appid, name: b.name, dir: b.dir, exe: b.exe, shortcut_id: b.shortcut_id,
+        provider: b.provider.unwrap_or_else(|| "Added by hand".into()), size: 0, version: b.version, installed: 0, installer_dir: None, source_name: None };
+    tracing::info!("adopt: {} ({}) shortcut {}", e.name, e.appid, e.shortcut_id);
+    Ok(Json(json!(a.m.adopt(e)?)))
+}
+
+#[derive(Deserialize)]
 struct ShortcutBody { shortcut_id: u32 }
 async fn set_shortcut(State(a): State<App>, Path(appid): Path<u32>, Json(b): Json<ShortcutBody>) -> R {
     Ok(Json(json!(a.m.set_shortcut(appid, b.shortcut_id)?)))
@@ -234,6 +244,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/jobs/clear", post(clear_jobs))
         .route("/jobs/{id}/{act}", post(job_action))
         .route("/library", get(library))
+        .route("/library/adopt", post(adopt))
         .route("/import", get(import_candidates).post(import_game))
         .route("/import/mount", post(mount_card))
         .route("/library/{appid}/uninstall", post(uninstall))
