@@ -40,6 +40,10 @@ pub struct Job {
     #[serde(default)] pub setup_started: Option<u64>,
     /// Set when this job replaces the files of an installed game (keeping its shortcut and Proton prefix).
     #[serde(default)] pub update_of: Option<u32>,
+    /// Game folder installed elsewhere (microSD, drop folder). Skips downloading and extracting.
+    #[serde(default)] pub import_dir: Option<PathBuf>,
+    /// Leave `import_dir` where it is (a microSD card) instead of moving it into the games folder.
+    #[serde(default)] pub keep_in_place: bool,
     #[serde(default)] pub cache_progress: f64,
     #[serde(default)] pub done: u64,
     #[serde(default)] pub total: u64,
@@ -162,6 +166,11 @@ impl Manager {
     pub fn library(&self) -> Vec<Entry> { self.saved.lock().unwrap().library.clone() }
 
     pub fn enqueue(&self, appid: u32, name: String, source: Source, local_files: Vec<PathBuf>, update: bool) -> Result<Job> {
+        self.enqueue_with(appid, name, source, local_files, update, |_| {})
+    }
+
+    /// `setup` runs before the job is visible to the workers, so they never see it half-configured.
+    fn enqueue_with(&self, appid: u32, name: String, source: Source, local_files: Vec<PathBuf>, update: bool, setup: impl FnOnce(&mut Job)) -> Result<Job> {
         let mut s = self.saved.lock().unwrap();
         if s.jobs.iter().any(|j| j.appid == appid && j.state.active()) {
             bail!("{name} is already in the queue");
@@ -171,7 +180,7 @@ impl Manager {
         if !update && installed.is_some() { bail!("{name} is already installed. Use Update to replace its files."); }
         s.next_id += 1;
         let job = Job { id: s.next_id, appid, name, source, state: State::Queued, error: None, torrent_id: None, links: vec![], local_files: vec![], dir: None,
-            setup_exe: None, exe: None, candidates: vec![], shortcut_id: None, setup_started: None, update_of: None, cache_progress: 0.0, done: 0, total: 0, speed: 0, created: now() };
+            setup_exe: None, exe: None, candidates: vec![], shortcut_id: None, setup_started: None, update_of: None, import_dir: None, keep_in_place: false, cache_progress: 0.0, done: 0, total: 0, speed: 0, created: now() };
         let mut job = job;
         job.local_files = local_files;
         if let Some(e) = installed.filter(|_| update) {
@@ -179,9 +188,11 @@ impl Manager {
             // Reuse the game's shortcut: same Steam entry, same Proton prefix, so saves and settings stay.
             job.shortcut_id = Some(e.shortcut_id);
         }
+        setup(&mut job);
         s.jobs.push(job.clone());
         self.save(&s);
         drop(s);
+        self.wake.notify_waiters();
         self.wake.notify_one();
         Ok(job)
     }
@@ -240,6 +251,13 @@ impl Manager {
         }
         self.update(id, |j| { j.exe = Some(cands[0].clone()); j.candidates = cands.into_iter().take(8).collect(); j.state = State::Ready; j.error = None });
         Ok(self.get(id).unwrap())
+    }
+
+    /// Add a game folder that is already installed somewhere else.
+    pub fn enqueue_import(&self, appid: u32, name: String, dir: PathBuf, keep_in_place: bool) -> Result<Job> {
+        let source = Source { name: dir.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(), provider: "Imported".into(),
+            size: String::new(), size_bytes: 0, magnet: None, url: None, version: None, urls: vec![], supported: true, repack: false, declared: false };
+        self.enqueue_with(appid, name, source, vec![], false, |j| { j.import_dir = Some(dir); j.keep_in_place = keep_in_place })
     }
 
     /// Steam made the shortcut; the plugin is still configuring it. A retry reuses it instead of adding a duplicate.
@@ -382,10 +400,24 @@ impl Manager {
         Ok(e)
     }
 
-    pub async fn run(self: Arc<Self>) {
+    /// Start the workers. Each claims the oldest queued job under the lock, so two never take the same one.
+    pub fn start(self: &Arc<Self>) {
+        let n = self.cfg.lock().unwrap().parallel_jobs.clamp(1, 4);
+        for _ in 0..n { tokio::spawn(self.clone().run()); }
+    }
+
+    fn claim(&self) -> Option<u64> {
+        let mut s = self.saved.lock().unwrap();
+        let j = s.jobs.iter_mut().find(|j| j.state == State::Queued)?;
+        j.state = State::Resolving;
+        let id = j.id;
+        self.save(&s);
+        Some(id)
+    }
+
+    async fn run(self: Arc<Self>) {
         loop {
-            let next = self.saved.lock().unwrap().jobs.iter().find(|j| j.state == State::Queued).map(|j| j.id);
-            let Some(id) = next else { self.wake.notified().await; continue };
+            let Some(id) = self.claim() else { self.wake.notified().await; continue };
             let prog = Arc::new(download::Progress::default());
             let stop = Arc::new(AtomicBool::new(false));
             let extract = Arc::new(extract::Permille::new(0));
@@ -393,6 +425,7 @@ impl Manager {
             let res = self.process(id, &prog, &stop, &extract).await;
             let (done, total) = (prog.done.load(Ordering::Relaxed), prog.total.load(Ordering::Relaxed));
             self.live.lock().unwrap().remove(&id);
+            self.wake.notify_one();
             match res {
                 Ok(()) => self.update(id, |j| { j.done = done; j.total = j.total.max(total); j.speed = 0 }),
                 Err(e) => {
@@ -412,6 +445,23 @@ impl Manager {
         let mut job = self.get(id).ok_or_else(|| anyhow!("job vanished"))?;
         let dl_dir = cfg.downloads_dir.join(id.to_string());
 
+        if let Some(src) = job.import_dir.clone() {
+            self.update(id, |j| j.state = State::Extracting);
+            let dir = if job.keep_in_place { src.clone() } else {
+                let to = cfg.games_dir.join(slug(&job.name));
+                if to.exists() { bail!("{} already exists; remove it or keep the game where it is", to.display()); }
+                tokio::task::spawn_blocking({ let (a, b) = (src.clone(), to.clone()); move || crate::import::move_dir(&a, &b) }).await??;
+                to
+            };
+            if let Some(setup) = install::find_setup(&dir) {
+                self.update(id, |j| { j.dir = Some(dir.clone()); j.setup_exe = Some(setup); j.state = State::NeedsSetup });
+                return Ok(());
+            }
+            let cands = install::find_game_exe(&dir, &job.name);
+            let exe = cands.first().filter(|c| c.score > -500).map(|c| c.path.clone()).ok_or_else(|| anyhow!("No game .exe found in {}", dir.display()))?;
+            self.update(id, |j| { j.dir = Some(dir.clone()); j.exe = Some(exe); j.candidates = cands.into_iter().take(8).map(|c| c.path).collect(); j.state = State::Ready });
+            return Ok(());
+        }
         if !job.local_files.is_empty() {
             // Browser download: take the user's file(s) out of ~/Downloads and go straight to extraction.
             tokio::fs::create_dir_all(&dl_dir).await?;

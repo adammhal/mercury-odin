@@ -16,6 +16,10 @@ export function Game() {
   const [status] = usePoll(api.status, 10000);
   const [refreshTick, setRefreshTick] = useState(0);
   const [found, srcErr] = useOnce(async () => (app ? api.sources(app.name, refreshTick > 0) : undefined), [app?.name, refreshTick]);
+  // While a refresh runs the previous list stays visible; this flag shows the spinner and blocks double presses.
+  const [refreshing, setRefreshing] = useState(false);
+  useEffect(() => { setRefreshing(false); }, [found, srcErr]);
+  useEffect(() => { if (!refreshing) return; const t = setTimeout(() => setRefreshing(false), 120000); return () => clearTimeout(t); }, [refreshing]);
   const [avail, setAvail] = useState<Record<string, Availability>>({});
   // Ask Real-Debrid which torrent sources are already cached (instant). Probes are remembered for a day.
   useEffect(() => {
@@ -115,8 +119,11 @@ export function Game() {
           <div style={{ fontSize: 13, fontWeight: 600, color: "#fff" }}>
             Sources <span style={{ color: C.dim, fontWeight: 500, fontSize: 13, marginLeft: 8 }}>{bytes(free)} free</span>
           </div>
-          <Btn style={{ height: 26, fontSize: 12, marginLeft: "auto" }} disabled={!found && !srcErr}
-            onClick={() => { setAvail({}); setRefreshTick((n) => n + 1); }}>Refresh sources</Btn>
+          {refreshing && <div style={{ display: "flex", alignItems: "center", gap: 8, marginLeft: "auto", color: C.dim, fontSize: 12 }}>
+            <Spinner style={{ width: 16, height: 16 }} />Refreshing sources… a live search can take up to a minute
+          </div>}
+          <Btn style={{ height: 26, fontSize: 12, marginLeft: refreshing ? 0 : "auto" }} disabled={refreshing || (!found && !srcErr)}
+            onClick={() => { setRefreshing(true); setAvail({}); setRefreshTick((n) => n + 1); }}>{refreshing ? "Refreshing…" : "Refresh sources"}</Btn>
         </Focusable>
         {!found && !srcErr && <div style={{ display: "flex", gap: 10, alignItems: "center", color: C.dim }}><Spinner style={{ width: 22 }} />Searching sources. The Mercury server can take a minute to wake up.</div>}
         {srcErr && <div style={{ color: C.bad }}>{srcErr}</div>}

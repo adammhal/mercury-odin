@@ -17,6 +17,8 @@ pub struct Config {
     pub launch_options: String,
     /// Steam shortcut that runs Firefox for hosts Real-Debrid cannot download from.
     pub browser_shortcut_id: Option<u32>,
+    /// How many jobs may download or extract at the same time.
+    pub parallel_jobs: usize,
 }
 
 impl Default for Config {
@@ -33,6 +35,7 @@ impl Default for Config {
             proton_tool: "proton-experimental-arm64".into(),
             launch_options: "/usr/libexec/armada/armada-game-launch ~/.lsfg %command%".into(),
             browser_shortcut_id: None,
+            parallel_jobs: 2,
         }
     }
 }

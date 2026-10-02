@@ -3,6 +3,7 @@ mod cache;
 mod config;
 mod download;
 mod extract;
+mod import;
 mod install;
 mod jobs;
 mod rd;
@@ -111,10 +112,11 @@ async fn new_job(State(a): State<App>, Json(j): Json<NewJob>) -> R {
         j.local_file.as_ref().map(|f| format!(", local file {}", f.display())).unwrap_or_default());
     let files = match &j.local_file {
         Some(f) => {
-            // Only files in the browser's download folder may be handed to a job.
-            let dir = config::browser_downloads_dir();
-            let ok = f.parent().is_some_and(|p| p == dir) && f.is_file();
-            if !ok { return Err(anyhow::anyhow!("{} is not a finished download in {}", f.display(), dir.display()).into()); }
+            // Only files in ~/Downloads or another import location may be handed to a job.
+            let in_downloads = f.parent().is_some_and(|p| p == config::browser_downloads_dir());
+            if !(f.is_file() && (in_downloads || import::allowed(f))) {
+                return Err(anyhow::anyhow!("{} is not a finished download or importable file", f.display()).into());
+            }
             browser::with_siblings(f)
         }
         None => vec![],
@@ -169,6 +171,25 @@ async fn update_check(State(a): State<App>, Path(appid): Path<u32>) -> R {
     Ok(Json(v))
 }
 
+async fn import_candidates() -> R {
+    let _ = std::fs::create_dir_all(import::drop_folder());
+    Ok(Json(json!({ "drop_folder": import::drop_folder(), "candidates": tokio::task::spawn_blocking(import::candidates).await? })))
+}
+
+#[derive(Deserialize)]
+struct ImportBody { path: std::path::PathBuf, appid: u32, name: String, #[serde(default)] keep_in_place: bool }
+async fn import_game(State(a): State<App>, Json(b): Json<ImportBody>) -> R {
+    if !import::allowed(&b.path) { return Err(anyhow::anyhow!("{} is not in an import location", b.path.display()).into()); }
+    tracing::info!("import: {} ({}) from {} keep_in_place={}", b.name, b.appid, b.path.display(), b.keep_in_place);
+    if b.path.is_dir() {
+        Ok(Json(json!(a.m.enqueue_import(b.appid, b.name, b.path, b.keep_in_place)?)))
+    } else {
+        let src = sources::Source { name: b.path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(), provider: "Imported".into(),
+            size: String::new(), size_bytes: 0, magnet: None, url: None, version: None, urls: vec![], supported: true, repack: false, declared: false };
+        Ok(Json(json!(a.m.enqueue(b.appid, b.name, src, browser::with_siblings(&b.path), false)?)))
+    }
+}
+
 async fn library(State(a): State<App>) -> R { Ok(Json(json!(a.m.library()))) }
 
 #[derive(Deserialize)]
@@ -188,7 +209,7 @@ async fn main() -> anyhow::Result<()> {
     let http = reqwest::Client::builder().user_agent("Mercury/0.1").connect_timeout(std::time::Duration::from_secs(15)).build()?;
     let cfg = Arc::new(Mutex::new(config::Config::load()));
     let m = jobs::Manager::new(http, cfg);
-    tokio::spawn(m.clone().run());
+    m.start();
     let app = Router::new()
         .route("/status", get(status))
         .route("/config", get(get_config).put(put_config))
@@ -204,6 +225,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/jobs/clear", post(clear_jobs))
         .route("/jobs/{id}/{act}", post(job_action))
         .route("/library", get(library))
+        .route("/import", get(import_candidates).post(import_game))
         .route("/library/{appid}/uninstall", post(uninstall))
         .route("/library/{appid}/update", get(update_check))
         .route("/library/{appid}/shortcut", post(set_shortcut))

@@ -22,9 +22,12 @@ export function Library() {
     <div style={page}>
       <FocusStyle />
       <div style={{ padding: "16px 28px 48px" }}>
-        <div style={{ fontSize: 18, fontWeight: 700, color: "#fff", marginBottom: 10 }}>
-          Installed with Mercury <span style={{ fontSize: 14, color: C.dim, fontWeight: 500 }}>{bytes((lib ?? []).reduce((a, e) => a + e.size, 0))}</span>
-        </div>
+        <Focusable flow-children="horizontal" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+          <div style={{ fontSize: 18, fontWeight: 700, color: "#fff" }}>
+            Installed with Mercury <span style={{ fontSize: 14, color: C.dim, fontWeight: 500 }}>{bytes((lib ?? []).reduce((a, e) => a + e.size, 0))}</span>
+          </div>
+          <Btn style={{ height: 28, fontSize: 12 }} onClick={() => Navigation.Navigate("/mercury/import")}>Import a game</Btn>
+        </Focusable>
         {lib && !lib.length && <div style={{ color: C.dim }}>No games installed with Mercury yet.</div>}
         <Focusable flow-children="vertical">
           {(lib ?? []).map((e) => (

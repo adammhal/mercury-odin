@@ -8,6 +8,7 @@ import { Downloads } from "./pages/Downloads";
 import { Game } from "./pages/Game";
 import { Home } from "./pages/Home";
 import { Library } from "./pages/Library";
+import { Import } from "./pages/Import";
 import { Search } from "./pages/Search";
 import { Settings } from "./pages/Settings";
 import { addToSteam, onAppExit, shortcutExists } from "./steam";
@@ -18,7 +19,7 @@ import { patchLibraryPage } from "./libraryBadge";
 
 const ROUTES: [string, FC][] = [
   ["/mercury", Home], ["/mercury/game/:appid", Game], ["/mercury/downloads", Downloads],
-  ["/mercury/library", Library], ["/mercury/search", Search], ["/mercury/settings", Settings],
+  ["/mercury/library", Library], ["/mercury/import", Import], ["/mercury/search", Search], ["/mercury/settings", Settings],
 ];
 
 /** Background work that must happen even when no Mercury page is open. */
