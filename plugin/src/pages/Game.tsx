@@ -37,7 +37,7 @@ export function Game() {
   };
 
   const viaBrowser = (s: Source) => showModal(<ConfirmModal strTitle="Download in your browser" strOKButtonText="Open Firefox"
-    strDescription={`Real-Debrid cannot fetch from this host, so you download it yourself.\n\n1. Mercury opens Firefox on the download page.\n2. Tap the host's Download button (touch is easiest). Some hosts show a short check first.\n3. When the file finishes, Mercury installs ${app?.name ?? "the game"} on its own.\n\nPress the Steam button and exit Firefox when you are done.`}
+    strDescription={`Real-Debrid cannot fetch from this host, so you download it yourself.\n\n1. Mercury opens Firefox on the download page.\n2. Tap the host's Download button (touch is easiest). Some hosts show a short check first.\n3. When the file finishes, Mercury closes Firefox and installs ${app?.name ?? "the game"} on its own.`}
     onOK={async () => {
       try { await downloadInBrowser(appid, app!.name, s); }
       catch (e: any) { toaster.toast({ title: "Mercury", body: e.message }); }

@@ -22,10 +22,10 @@ export function JobProgress({ job, label }: { job: Job; label?: ReactNode }) {
   const pct = jobPercent(job);
   const detail = job.state === "downloading" && job.total
     ? `${bytes(job.done)} of ${bytes(job.total)}${job.speed ? ` · ${bytes(job.speed)}/s` : ""}`
-    : job.state === "caching" ? `${pct.toFixed(0)}%` : "";
+    : job.state === "caching" || (job.state === "extracting" && job.total) ? `${pct.toFixed(0)}%` : "";
   return (
     <Field label={label ?? job.name} description={job.error ?? `${STATE_LABEL[job.state]}${detail ? ` · ${detail}` : ""}`} childrenLayout="below" bottomSeparator="none">
-      <ProgressBar nProgress={pct} indeterminate={["resolving", "extracting", "queued"].includes(job.state)} />
+      <ProgressBar nProgress={pct} indeterminate={["resolving", "queued"].includes(job.state) || (job.state === "extracting" && !job.total)} />
     </Field>
   );
 }

@@ -2,7 +2,12 @@
 use anyhow::{Context, Result, bail};
 use regex::Regex;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use tokio::io::AsyncReadExt;
 use tokio::process::Command;
+
+/// Extraction progress in thousandths (0..=1000) across all archives of a job.
+pub type Permille = AtomicU64;
 
 /// Password OnlineFix uses for its inner archives (carried over from the old app).
 const INNER_PASSWORDS: &[&str] = &["online-fix.me"];
@@ -33,27 +38,50 @@ pub fn unrar_path() -> PathBuf {
     crate::config::home().join(".local/share/mercury/bin/unrar")
 }
 
-async fn run(archive: &Path, dest: &Path, password: Option<&str>) -> Result<()> {
+/// `share` = (index, count): this archive's slice of the overall bar.
+async fn run(archive: &Path, dest: &Path, password: Option<&str>, progress: Option<(&Permille, usize, usize)>) -> Result<()> {
     tokio::fs::create_dir_all(dest).await?;
     let lower = archive.to_string_lossy().to_lowercase();
     let is_rar = lower.ends_with(".rar") || Regex::new(r"\.r\d{2}$").unwrap().is_match(&lower);
     let mut cmd = if is_rar {
         let mut c = Command::new(unrar_path());
-        c.arg("x").arg("-o+").arg("-y").arg("-idq");
+        // -idcd hides the banner and "Done" but keeps the running percentage, which we read for progress.
+        c.arg("x").arg("-o+").arg("-y").arg("-idcd");
         c.arg(format!("-p{}", password.unwrap_or("-")));
         c.arg(archive).arg(format!("{}/", dest.display()));
         c
     } else {
         let mut c = Command::new("7z");
-        c.arg("x").arg("-y").arg(format!("-o{}", dest.display()));
+        // -bsp1 sends the running percentage to stdout; -bso0 drops the file list.
+        c.arg("x").arg("-y").arg("-bsp1").arg("-bso0").arg(format!("-o{}", dest.display()));
         if let Some(pw) = password { c.arg(format!("-p{pw}")); }
         c.arg(archive);
         c
     };
-    cmd.stdin(std::process::Stdio::null());
-    let out = cmd.output().await.with_context(|| format!("could not start extractor for {}", archive.display()))?;
-    if !out.status.success() {
-        let msg = String::from_utf8_lossy(if out.stderr.is_empty() { &out.stdout } else { &out.stderr }).lines().last().unwrap_or("").to_string();
+    cmd.stdin(std::process::Stdio::null()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
+    let mut child = cmd.spawn().with_context(|| format!("could not start extractor for {}", archive.display()))?;
+    let mut stdout = child.stdout.take().unwrap();
+    let mut stderr = child.stderr.take().unwrap();
+    let pct = Regex::new(r"(\d{1,3})%").unwrap();
+    let mut tail = String::new();
+    let mut buf = [0u8; 4096];
+    loop {
+        let n = stdout.read(&mut buf).await?;
+        if n == 0 { break; }
+        let chunk = String::from_utf8_lossy(&buf[..n]);
+        if let (Some((p, i, count)), Some(m)) = (progress, pct.captures_iter(&chunk).last()) {
+            let v = m[1].parse::<u64>().unwrap_or(0).min(100);
+            p.store(((i as u64 * 1000) + v * 10) / count.max(1) as u64, Ordering::Relaxed);
+        }
+        tail.push_str(&chunk);
+        if tail.len() > 4000 { tail = tail[tail.len() - 2000..].to_string(); }
+    }
+    let mut err = String::new();
+    let _ = stderr.read_to_string(&mut err).await;
+    let status = child.wait().await?;
+    if !status.success() {
+        let src = if err.trim().is_empty() { &tail } else { &err };
+        let msg = src.replace('\u{8}', "").lines().map(str::trim).filter(|l| !l.is_empty()).last().unwrap_or("").to_string();
         bail!("extracting {} failed: {msg}", archive.file_name().unwrap_or_default().to_string_lossy());
     }
     Ok(())
@@ -87,7 +115,7 @@ fn flatten(dir: &Path) -> Result<()> {
 
 /// Extract every archive found in `src` into `dest`. Files that are not archives are moved as-is.
 /// Archives found inside the result (OnlineFix nests one) are extracted in place.
-pub async fn extract_all(src: &Path, dest: &Path) -> Result<()> {
+pub async fn extract_all(src: &Path, dest: &Path, progress: Option<&Permille>) -> Result<()> {
     let mut files = vec![];
     walk(src, &mut files);
     let archives = first_parts(&files);
@@ -100,18 +128,19 @@ pub async fn extract_all(src: &Path, dest: &Path) -> Result<()> {
             tokio::fs::rename(f, &to).await?;
         }
     } else {
-        for a in &archives {
-            run(a, dest, None).await?;
+        for (i, a) in archives.iter().enumerate() {
+            run(a, dest, None, progress.map(|p| (p, i, archives.len()))).await?;
         }
+        if let Some(p) = progress { p.store(1000, Ordering::Relaxed); }
     }
     let mut inner = vec![];
     walk(dest, &mut inner);
     for a in first_parts(&inner) {
         let at = a.parent().unwrap_or(dest).to_path_buf();
-        let mut ok = run(&a, &at, None).await.is_ok();
+        let mut ok = run(&a, &at, None, None).await.is_ok();
         for pw in INNER_PASSWORDS {
             if ok { break; }
-            ok = run(&a, &at, Some(pw)).await.is_ok();
+            ok = run(&a, &at, Some(pw), None).await.is_ok();
         }
         if ok {
             let _ = tokio::fs::remove_file(&a).await;
@@ -140,7 +169,9 @@ mod tests {
         assert!(Std::new("7z").args(["a", "-y", "-bso0", "-ponline-fix.me"]).arg(stage.join("Game/Fix.7z")).arg(fix.join("fix.dll")).status().unwrap().success());
         std::fs::create_dir_all(&src).unwrap();
         assert!(Std::new("7z").args(["a", "-y", "-bso0"]).arg(src.join("game.zip")).arg(stage.join("Game")).status().unwrap().success());
-        extract_all(&src, &dest).await.unwrap();
+        let p = Permille::new(0);
+        extract_all(&src, &dest, Some(&p)).await.unwrap();
+        assert_eq!(p.load(Ordering::Relaxed), 1000, "progress reaches 100%");
         assert!(dest.join("bin/game.exe").exists(), "single top folder is flattened");
         assert!(dest.join("fix.dll").exists(), "password-protected inner archive is extracted");
         assert!(!dest.join("Fix.7z").exists());

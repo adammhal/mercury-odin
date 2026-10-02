@@ -63,7 +63,7 @@ pub struct Entry {
 #[derive(Default, Serialize, Deserialize)]
 struct Saved { jobs: Vec<Job>, library: Vec<Entry>, next_id: u64 }
 
-struct Live { prog: Arc<download::Progress>, stop: Arc<AtomicBool> }
+struct Live { prog: Arc<download::Progress>, stop: Arc<AtomicBool>, extract: Arc<extract::Permille> }
 
 pub struct Manager {
     saved: Mutex<Saved>,
@@ -114,9 +114,16 @@ impl Manager {
         let live = self.live.lock().unwrap();
         s.jobs.iter().cloned().map(|mut j| {
             if let Some(l) = live.get(&j.id) {
-                j.done = l.prog.done.load(Ordering::Relaxed);
-                j.total = j.total.max(l.prog.total.load(Ordering::Relaxed));
-                j.speed = l.prog.speed.load(Ordering::Relaxed);
+                if j.state == State::Extracting {
+                    // Reported as thousandths so the UI shows a real bar while 7z or unrar runs.
+                    j.done = l.extract.load(Ordering::Relaxed);
+                    j.total = 1000;
+                    j.speed = 0;
+                } else {
+                    j.done = l.prog.done.load(Ordering::Relaxed);
+                    j.total = j.total.max(l.prog.total.load(Ordering::Relaxed));
+                    j.speed = l.prog.speed.load(Ordering::Relaxed);
+                }
             }
             j
         }).collect()
@@ -301,8 +308,9 @@ impl Manager {
             let Some(id) = next else { self.wake.notified().await; continue };
             let prog = Arc::new(download::Progress::default());
             let stop = Arc::new(AtomicBool::new(false));
-            self.live.lock().unwrap().insert(id, Live { prog: prog.clone(), stop: stop.clone() });
-            let res = self.process(id, &prog, &stop).await;
+            let extract = Arc::new(extract::Permille::new(0));
+            self.live.lock().unwrap().insert(id, Live { prog: prog.clone(), stop: stop.clone(), extract: extract.clone() });
+            let res = self.process(id, &prog, &stop, &extract).await;
             let (done, total) = (prog.done.load(Ordering::Relaxed), prog.total.load(Ordering::Relaxed));
             self.live.lock().unwrap().remove(&id);
             match res {
@@ -319,7 +327,7 @@ impl Manager {
         stop.load(Ordering::Relaxed) || self.get(id).is_none_or(|j| !matches!(j.state, State::Queued | State::Resolving | State::Caching | State::Downloading | State::Extracting))
     }
 
-    async fn process(&self, id: u64, prog: &Arc<download::Progress>, stop: &Arc<AtomicBool>) -> Result<()> {
+    async fn process(&self, id: u64, prog: &Arc<download::Progress>, stop: &Arc<AtomicBool>, extract: &Arc<extract::Permille>) -> Result<()> {
         let cfg = self.cfg.lock().unwrap().clone();
         let mut job = self.get(id).ok_or_else(|| anyhow!("job vanished"))?;
         let dl_dir = cfg.downloads_dir.join(id.to_string());
@@ -335,7 +343,7 @@ impl Manager {
                     let _ = tokio::fs::remove_file(f).await;
                 }
             }
-            return self.finish(id, &cfg, None, &dl_dir).await;
+            return self.finish(id, &cfg, None, &dl_dir, extract).await;
         }
         let rd = Rd::new(self.http.clone(), &cfg.rd_key)?;
 
@@ -409,16 +417,16 @@ impl Manager {
             }
         }
         if self.stopped(id, stop) { return Ok(()); }
-        self.finish(id, &cfg, Some(&rd), &dl_dir).await
+        self.finish(id, &cfg, Some(&rd), &dl_dir, extract).await
     }
 
     /// Extract what is in `dl_dir`, then decide between a repack installer and a ready game.
-    async fn finish(&self, id: u64, cfg: &Config, rd: Option<&Rd>, dl_dir: &std::path::Path) -> Result<()> {
+    async fn finish(&self, id: u64, cfg: &Config, rd: Option<&Rd>, dl_dir: &std::path::Path, extract: &extract::Permille) -> Result<()> {
         let job = self.get(id).ok_or_else(|| anyhow!("job vanished"))?;
         self.update(id, |j| j.state = State::Extracting);
         let dir = cfg.games_dir.join(slug(&job.name));
         if dir.exists() { tokio::fs::remove_dir_all(&dir).await?; }
-        extract::extract_all(dl_dir, &dir).await?;
+        extract::extract_all(dl_dir, &dir, Some(extract)).await?;
         let _ = tokio::fs::remove_dir_all(dl_dir).await;
         if let (Some(t), Some(rd)) = (&job.torrent_id, rd) { let _ = rd.delete(t).await; }
 

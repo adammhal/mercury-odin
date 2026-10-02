@@ -5,9 +5,16 @@ import { gameId } from "./steam";
 declare const SteamClient: any;
 declare const appStore: any;
 
-/** A browser download Mercury is waiting for. Module state: lives as long as the plugin. */
-export type Pending = { appid: number; name: string; source: Source; since: number };
-export let pending: Pending | undefined;
+/** A browser download Mercury is waiting for. Kept in localStorage so a plugin reload does not lose it. */
+export type Pending = { appid: number; name: string; source: Source; since: number; shortcut: number };
+const KEY = "mercury.pendingBrowserDownload";
+export let pending: Pending | undefined = (() => {
+  try { return JSON.parse(localStorage.getItem(KEY) ?? "null") ?? undefined; } catch { return undefined; }
+})();
+function setPending(p: Pending | undefined) {
+  pending = p;
+  try { p ? localStorage.setItem(KEY, JSON.stringify(p)) : localStorage.removeItem(KEY); } catch { /* storage unavailable */ }
+}
 
 const SAFE_URL = /^https:\/\/[A-Za-z0-9\-._~:\/?#\[\]@!&()*+,;=%]+$/;
 
@@ -32,12 +39,12 @@ export async function downloadInBrowser(appid: number, name: string, source: Sou
   const gid = gameId(id);
   try { SteamClient.Apps.TerminateApp(gid, false); } catch { /* not running */ }
   SteamClient.Apps.SetShortcutLaunchOptions(id, `MOZ_ENABLE_WAYLAND=0 %command% "${url}"`);
-  pending = { appid, name, source, since: Math.floor(Date.now() / 1000) - 5 };
+  setPending({ appid, name, source, since: Math.floor(Date.now() / 1000) - 5, shortcut: id });
   await new Promise((r) => setTimeout(r, 800));
   SteamClient.Apps.RunGame(gid, "", -1, 100);
 }
 
-export function cancelBrowserDownload() { pending = undefined; }
+export function cancelBrowserDownload() { setPending(undefined); }
 
 let lastSize = new Map<string, number>();
 
@@ -54,11 +61,13 @@ export async function checkBrowserDownload() {
   const prev = lastSize.get(pick.path);
   lastSize.set(pick.path, pick.size);
   if (prev !== pick.size || !pick.size) return;
-  pending = undefined;
+  setPending(undefined);
   lastSize = new Map();
   try {
     await api.install(p.appid, p.name, p.source, pick.path);
-    toaster.toast({ title: "Mercury", body: `Got ${pick.name}. Installing ${p.name} now; exit Firefox whenever you like.` });
+    // The file is Mercury's now, so take the user back to Steam.
+    try { SteamClient.Apps.TerminateApp(gameId(p.shortcut), false); } catch { /* already closed */ }
+    toaster.toast({ title: "Mercury", body: `Got ${pick.name}. Installing ${p.name} now.` });
   } catch (e: any) {
     toaster.toast({ title: "Mercury", body: `Could not install from ${pick.name}: ${e.message}` });
   }
