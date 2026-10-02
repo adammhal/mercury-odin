@@ -343,6 +343,16 @@ impl Manager {
         Ok(())
     }
 
+    /// The game's Steam shortcut was re-created (after the user removed it in Steam).
+    pub fn set_shortcut(&self, appid: u32, shortcut_id: u32) -> Result<Entry> {
+        let mut s = self.saved.lock().unwrap();
+        let e = s.library.iter_mut().find(|e| e.appid == appid).ok_or_else(|| anyhow!("not installed"))?;
+        e.shortcut_id = shortcut_id;
+        let out = e.clone();
+        self.save(&s);
+        Ok(out)
+    }
+
     pub fn uninstall(&self, appid: u32) -> Result<Entry> {
         let mut s = self.saved.lock().unwrap();
         let i = s.library.iter().position(|e| e.appid == appid).ok_or_else(|| anyhow!("not installed"))?;

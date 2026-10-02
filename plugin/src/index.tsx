@@ -10,7 +10,8 @@ import { Home } from "./pages/Home";
 import { Library } from "./pages/Library";
 import { Search } from "./pages/Search";
 import { Settings } from "./pages/Settings";
-import { addToSteam, onAppExit } from "./steam";
+import { addToSteam, onAppExit, shortcutExists } from "./steam";
+import { Navigation } from "@decky/ui";
 import { checkBrowserDownload } from "./browser";
 import { stopStoreButton, tickStoreButton } from "./storeButton";
 import { patchLibraryPage } from "./libraryBadge";
@@ -49,7 +50,28 @@ function startWatcher() {
       }
     }
   };
-  const timer = setInterval(() => { tick(); checkBrowserDownload(); tickStoreButton(); }, 2000);
+  // A game whose shortcut the user deleted in Steam leaves its files behind; offer to clean up.
+  const missingSince = new Map<number, number>();
+  const announced = new Set<number>(JSON.parse(localStorage.getItem("mercury.removedAnnounced") ?? "[]"));
+  let n = 0;
+  const checkRemoved = async () => {
+    if (++n % 15) return;
+    let lib;
+    try { lib = await api.library(); } catch { return; }
+    for (const e of lib) {
+      const exists = shortcutExists(e.shortcut_id);
+      if (exists !== false) { missingSince.delete(e.appid); announced.delete(e.appid); continue; }
+      const first = missingSince.get(e.appid) ?? Date.now();
+      missingSince.set(e.appid, first);
+      // Two checks in a row (30 s apart) before believing it, and one notification per removal.
+      if (Date.now() - first < 25000 || announced.has(e.appid)) continue;
+      announced.add(e.appid);
+      toaster.toast({ title: "Mercury", body: `${e.name} was removed from Steam. Its files are still installed. Tap to clean up.`,
+        onClick: () => Navigation.Navigate("/mercury/library") } as any);
+    }
+    localStorage.setItem("mercury.removedAnnounced", JSON.stringify([...announced]));
+  };
+  const timer = setInterval(() => { tick(); checkBrowserDownload(); tickStoreButton(); checkRemoved(); }, 2000);
   // When a repack installer closes, look for the installed game and add it.
   const stopExit = onAppExit(async (appid) => {
     const j = jobs.find((x) => x.state === "installing" && x.shortcut_id === appid);

@@ -169,6 +169,12 @@ async fn update_check(State(a): State<App>, Path(appid): Path<u32>) -> R {
 }
 
 async fn library(State(a): State<App>) -> R { Ok(Json(json!(a.m.library()))) }
+
+#[derive(Deserialize)]
+struct ShortcutBody { shortcut_id: u32 }
+async fn set_shortcut(State(a): State<App>, Path(appid): Path<u32>, Json(b): Json<ShortcutBody>) -> R {
+    Ok(Json(json!(a.m.set_shortcut(appid, b.shortcut_id)?)))
+}
 async fn uninstall(State(a): State<App>, Path(id): Path<u32>) -> R { Ok(Json(json!(a.m.uninstall(id)?))) }
 async fn installer_files(State(a): State<App>, Path(id): Path<u32>) -> R {
     Ok(Json(match a.m.installer_files(id) { Some((d, n)) => json!({ "dir": d, "size": n }), None => json!(null) }))
@@ -199,6 +205,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/library", get(library))
         .route("/library/{appid}/uninstall", post(uninstall))
         .route("/library/{appid}/update", get(update_check))
+        .route("/library/{appid}/shortcut", post(set_shortcut))
         .route("/library/{appid}/installer-files", get(installer_files).delete(delete_installer_files))
         .with_state(App { m });
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", PORT)).await?;

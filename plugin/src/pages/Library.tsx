@@ -2,13 +2,15 @@ import { Focusable, Navigation } from "@decky/ui";
 import { useEffect, useState } from "react";
 import { api, bytes, cdn, UpdateInfo } from "../api";
 import { usePoll } from "../hooks";
-import { gameId } from "../steam";
+import { gameId, readdToSteam, shortcutExists } from "../steam";
+import { ConfirmModal, showModal } from "@decky/ui";
+import { toaster } from "@decky/api";
 import { Btn, C, FocusStyle, page, scrollIntoView } from "../ui";
 
 declare const SteamClient: any;
 
 export function Library() {
-  const [lib] = usePoll(api.library, 5000);
+  const [lib, , reload] = usePoll(api.library, 5000);
   const [updates, setUpdates] = useState<Record<number, UpdateInfo>>({});
   useEffect(() => {
     for (const e of lib ?? []) {
@@ -34,8 +36,19 @@ export function Library() {
                 <div style={{ fontSize: 12, color: C.dim, marginTop: 4 }}>{e.provider}{e.version ? ` ${e.version}` : ""} · {bytes(e.size)} · {new Date(e.installed * 1000).toLocaleDateString()}</div>
                 {updates[e.appid]?.newer && <div style={{ fontSize: 12, color: C.ok, marginTop: 3 }}>Update available: {updates[e.appid].newer!.version}</div>}
               </div>
-              <Btn style={{ width: 90 }} onClick={() => SteamClient.Apps.RunGame(gameId(e.shortcut_id), "", -1, 100)}>Play</Btn>
-              <Btn style={{ width: 90 }} onClick={() => Navigation.Navigate(`/mercury/game/${e.appid}`)}>Details</Btn>
+              {shortcutExists(e.shortcut_id) === false ? <>
+                <span style={{ fontSize: 12, color: C.warn, marginRight: 4 }}>Removed from Steam</span>
+                <Btn style={{ width: 120 }} onClick={async () => {
+                  try { await readdToSteam(e); toaster.toast({ title: "Mercury", body: `${e.name} is back in your Steam library` }); reload(); }
+                  catch (err: any) { toaster.toast({ title: "Mercury", body: err.message }); }
+                }}>Add back</Btn>
+                <Btn style={{ width: 120 }} onClick={() => showModal(<ConfirmModal strTitle={`Delete ${e.name}?`} strOKButtonText="Delete files"
+                  strDescription={`Its Steam shortcut is already gone. This deletes the game files (${bytes(e.size)}) and its Proton prefix, which holds local saves.`}
+                  onOK={async () => { await api.uninstall(e.appid); reload(); }} />)}>Delete files</Btn>
+              </> : <>
+                <Btn style={{ width: 90 }} onClick={() => SteamClient.Apps.RunGame(gameId(e.shortcut_id), "", -1, 100)}>Play</Btn>
+                <Btn style={{ width: 90 }} onClick={() => Navigation.Navigate(`/mercury/game/${e.appid}`)}>Details</Btn>
+              </>}
             </Focusable>
           ))}
         </Focusable>

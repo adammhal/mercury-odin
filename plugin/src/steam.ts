@@ -1,9 +1,10 @@
-import { api, Job, withTimeout } from "./api";
+import { api, Entry, Job, withTimeout } from "./api";
 
 const log = (...a: unknown[]) => console.log("[Mercury] add to Steam:", ...a);
 const step = <T,>(what: string, p: Promise<T> | T) => withTimeout(Promise.resolve(p), 15000, what);
 
 declare const SteamClient: any;
+declare const appStore: any;
 
 /** Non-Steam shortcuts launch by 64-bit game ID: (appid << 32) | 0x02000000. */
 export const gameId = (appid: number) => ((BigInt(appid >>> 0) << 32n) | 0x02000000n).toString();
@@ -79,4 +80,26 @@ export function onAppExit(cb: (appid: number) => void): () => void {
     if (!n.bRunning) cb(n.unAppID);
   });
   return () => h?.unregister?.();
+}
+
+/**
+ * Whether Steam still has this shortcut. `undefined` means "can't tell yet": right after Steam starts the app
+ * store may not list shortcuts, and calling that "removed" would wrongly offer to delete a game.
+ */
+export function shortcutExists(id: number): boolean | undefined {
+  const apps: any[] = appStore?.allApps ?? [];
+  if (!apps.some((a) => a?.app_type === 1073741824)) return undefined;
+  return !!appStore.GetAppOverviewByAppID?.(id);
+}
+
+/** Put a Mercury game back into Steam after the user removed its shortcut. */
+export async function readdToSteam(e: Entry): Promise<number> {
+  const dir = e.exe.slice(0, e.exe.lastIndexOf("/") + 1);
+  const id = Number(await step("AddShortcut", SteamClient.Apps.AddShortcut(e.name, e.exe, dir, "")));
+  if (!id) throw new Error("Steam did not create the shortcut");
+  await configure(id, e.name);
+  await applyArt(id, e.appid);
+  await api.setShortcut(e.appid, id);
+  log(e.name, "re-added as shortcut", id);
+  return id;
 }

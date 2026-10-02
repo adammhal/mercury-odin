@@ -61,6 +61,7 @@ export const api = {
   clearJobs: () => req<{ cleared: number }>("/jobs/clear", "POST", {}),
   library: () => req<Entry[]>("/library"),
   uninstall: (appid: number) => req<Entry>(`/library/${appid}/uninstall`, "POST", {}),
+  setShortcut: (appid: number, shortcut_id: number) => req<Entry>(`/library/${appid}/shortcut`, "POST", { shortcut_id }),
   installerFiles: (appid: number) => req<{ dir: string; size: number } | null>(`/library/${appid}/installer-files`),
   deleteInstallerFiles: (appid: number) => req<{ freed: number }>(`/library/${appid}/installer-files`, "DELETE"),
 };
