@@ -34,8 +34,10 @@ fn first_parts(files: &[PathBuf]) -> Vec<PathBuf> {
     out
 }
 
+/// The unrar shipped next to mercuryd in the plugin package, else one installed by hand.
 pub fn unrar_path() -> PathBuf {
-    crate::config::home().join(".local/share/mercury/bin/unrar")
+    let bundled = std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.join("unrar")));
+    bundled.filter(|p| p.exists()).unwrap_or_else(|| crate::config::home().join(".local/share/mercury/bin/unrar"))
 }
 
 /// `share` = (index, count): this archive's slice of the overall bar.

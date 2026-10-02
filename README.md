@@ -50,6 +50,13 @@ Proton, the frame-generation launch option, and a Steam shortcut like any other 
 - **Updates:** choose any source on an installed game's page. The release is staged first; only then are its
   files moved over the installed game, keeping the same Steam shortcut and Proton prefix.
 - **Removed in Steam:** Mercury notices a deleted shortcut and offers Add back or Delete files in Library.
+- **Where games go:** Settings, **Install new games on**: internal storage or a mounted microSD card
+  (`<card>/Mercury`). **Move** in Library moves an installed game between them; the Steam shortcut is repointed,
+  so its Proton prefix and saves stay.
+- **Hand-made shortcuts:** Import lists your other non-Steam shortcuts. Match one to its Steam game to add it to
+  Mercury's library (update checks, art) without changing the shortcut.
+- **SteamRIP updates:** SteamRIP releases often carry no version, so an update is any SteamRIP upload dated after
+  the installed one.
 - **Two jobs at once** (`parallel_jobs` in `~/.local/share/mercury/config.json`).
 - **Logs:** `~/.local/share/mercury/mercuryd.log` (engine), `[Mercury]` lines in `~/.local/share/Steam/logs/cef_log.txt` (plugin).
 
@@ -62,9 +69,17 @@ Proton, the frame-generation launch option, and a Steam shortcut like any other 
 - `ProgressBarItem` overflows panels. Use `Field` with `childrenLayout="below"` and a `ProgressBar`.
 - Decky's hot reload does not remount an open Quick Access panel; restart `plugin_loader` to test panel changes.
 - Decky re-owns the plugin folder to root on load. `dist/`, `bin/` and `main.py` stay writable by armada.
-- Fedora's 7zip has no RAR codec. unrar is built from RARLAB source into `~/.local/share/mercury/bin/unrar`.
+- Fedora's 7zip has no RAR codec. unrar comes from RARLAB source; the engine uses `bin/unrar` next to itself, else `~/.local/share/mercury/bin/unrar`.
 
-## Building unrar
+## Installing from a zip
+
+`scripts/package.sh` builds `out/Mercury.zip` in Docker (fedora:44, arm64). The zip holds the plugin, `mercuryd`
+and unrar, so nothing else needs installing. On the device: Decky, Settings, Developer, **Install plugin from zip**.
+7-Zip comes with Armada. Then set the Real-Debrid key (above).
+
+## Building unrar by hand
+
+The packaged plugin ships unrar next to `mercuryd`. Without the package, build it from source:
 
 ```sh
 distrobox enter lsfg-vk-build -- bash -lc 'cd ~/mercury/build && curl -sSfL https://www.rarlab.com/rar/unrarsrc-7.3.1.tar.gz | tar xz && make -C unrar -j8'
