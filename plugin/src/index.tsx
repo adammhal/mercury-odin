@@ -12,6 +12,7 @@ import { Search } from "./pages/Search";
 import { Settings } from "./pages/Settings";
 import { addToSteam, onAppExit } from "./steam";
 import { checkBrowserDownload } from "./browser";
+import { stopStoreButton, tickStoreButton } from "./storeButton";
 
 const ROUTES: [string, FC][] = [
   ["/mercury", Home], ["/mercury/game/:appid", Game], ["/mercury/downloads", Downloads],
@@ -41,7 +42,7 @@ function startWatcher() {
       }
     }
   };
-  const timer = setInterval(() => { tick(); checkBrowserDownload(); }, 2000);
+  const timer = setInterval(() => { tick(); checkBrowserDownload(); tickStoreButton(); }, 2000);
   // When a repack installer closes, look for the installed game and add it.
   const stopExit = onAppExit(async (appid) => {
     const j = jobs.find((x) => x.state === "installing" && x.shortcut_id === appid);
@@ -49,7 +50,7 @@ function startWatcher() {
     try { await api.act(j.id, "setup-done"); }
     catch (e: any) { toaster.toast({ title: "Mercury", body: e.message }); }
   });
-  return () => { clearInterval(timer); stopExit(); };
+  return () => { clearInterval(timer); stopExit(); stopStoreButton(); };
 }
 
 export default definePlugin(() => {
