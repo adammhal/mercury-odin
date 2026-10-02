@@ -1,9 +1,9 @@
-import { ButtonItem, DialogButton, Dropdown, Field, Focusable, PanelSection, TextField, ToggleField } from "@decky/ui";
+import { ButtonItem, Dropdown, Field, Focusable, PanelSection, TextField, ToggleField } from "@decky/ui";
 import { toaster } from "@decky/api";
 import { useEffect, useState } from "react";
 import { api, bytes, Config } from "../api";
 import { usePoll } from "../hooks";
-import { C, page } from "../ui";
+import { Btn, C, FocusStyle, page } from "../ui";
 
 // Internal tool names as reported by SteamClient.Apps.GetAvailableCompatTools on the Odin (2026-10-01).
 // A wrong name makes Steam run the .exe natively with no error, so never guess these.
@@ -30,6 +30,7 @@ export function Settings() {
   if (!cfg) return <div style={page}><div style={{ padding: 48, color: C.dim }}>Loading settings…</div></div>;
   return (
     <div style={page}>
+      <FocusStyle />
       <div style={{ padding: "16px 28px 48px", maxWidth: 820 }}>
         <div style={{ fontSize: 18, fontWeight: 700, color: "#fff", marginBottom: 4 }}>Settings</div>
         <PanelSection title="Real-Debrid">
@@ -37,8 +38,8 @@ export function Settings() {
             <TextField bIsPassword value={key} onChange={(e) => setKey(e.target.value)} />
           </Field>
           <Focusable flow-children="horizontal" style={{ display: "flex", gap: 10, margin: "8px 0 4px" }}>
-            <DialogButton style={{ width: 180 }} disabled={!key} onClick={async () => { await save({ rd_key: key }); setKey(""); }}>Save key</DialogButton>
-            <DialogButton style={{ width: 180 }} disabled={!cfg.rd_key_set} onClick={check}>Test key</DialogButton>
+            <Btn style={{ width: 180 }} disabled={!key} onClick={async () => { await save({ rd_key: key }); setKey(""); }}>Save key</Btn>
+            <Btn style={{ width: 180 }} disabled={!cfg.rd_key_set} onClick={check}>Test key</Btn>
           </Focusable>
         </PanelSection>
         <PanelSection title="Games">

@@ -3,7 +3,7 @@ import { fetchNoCors } from "@decky/api";
 const BASE = "http://127.0.0.1:47800";
 
 export type App = { appid: number; name: string; description: string; genres: string[]; release: string; developer: string };
-export type Source = { name: string; provider: string; size: string; size_bytes: number; magnet?: string | null; url?: string | null; version?: string | null };
+export type Source = { name: string; provider: string; size: string; size_bytes: number; magnet?: string | null; url?: string | null; version?: string | null; urls?: string[]; supported?: boolean };
 export type JobState = "queued" | "resolving" | "caching" | "downloading" | "paused" | "extracting" | "needs_setup" | "installing" | "ready" | "done" | "failed" | "cancelled";
 export type Job = {
   id: number; appid: number; name: string; source: Source; state: JobState; error?: string | null;
@@ -20,7 +20,10 @@ async function req<T>(path: string, method = "GET", body?: unknown): Promise<T> 
     headers: body === undefined ? undefined : { "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  const data = await r.json();
+  // While the engine restarts, Decky answers for it with a non-JSON error page.
+  const text = await r.text();
+  let data: any;
+  try { data = JSON.parse(text); } catch { throw new Error("Mercury engine is restarting. Try again in a moment."); }
   if (!r.ok) throw new Error(data?.error ?? `HTTP ${r.status}`);
   return data as T;
 }
@@ -40,6 +43,8 @@ export const api = {
   act: (id: number, act: string, body?: object) => req<unknown>(`/jobs/${id}/${act}`, "POST", body ?? {}),
   library: () => req<Entry[]>("/library"),
   uninstall: (appid: number) => req<Entry>(`/library/${appid}/uninstall`, "POST", {}),
+  installerFiles: (appid: number) => req<{ dir: string; size: number } | null>(`/library/${appid}/installer-files`),
+  deleteInstallerFiles: (appid: number) => req<{ freed: number }>(`/library/${appid}/installer-files`, "DELETE"),
 };
 
 export const cdn = (id: number, f: "library_600x900.jpg" | "library_hero.jpg" | "logo.png" | "header.jpg") =>

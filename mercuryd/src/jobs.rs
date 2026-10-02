@@ -158,7 +158,8 @@ impl Manager {
         self.update(id, |j| if j.state == State::NeedsSetup { j.state = State::Installing; j.shortcut_id = Some(shortcut_id) });
     }
 
-    /// The user finished the installer. Look for the game inside the shortcut's Proton prefix.
+    /// The installer closed. Look for the game inside the shortcut's Proton prefix.
+    /// If nothing real was installed, go back to `needs_setup` so the user can run it again.
     pub fn setup_done(&self, id: u64) -> Result<Job> {
         let job = self.get(id).ok_or_else(|| anyhow!("no such job"))?;
         let sid = job.shortcut_id.ok_or_else(|| anyhow!("installer was not launched"))?;
@@ -168,14 +169,17 @@ impl Manager {
             let base = if sub.is_empty() { drive_c.clone() } else { drive_c.join(sub) };
             if !base.is_dir() { continue; }
             for c in install::find_game_exe(&base, &job.name) {
-                let p = c.path.to_string_lossy().to_lowercase();
-                if p.contains("/windows/") || p.contains("/users/") || p.contains("/programdata/") || p.contains("common files") || p.contains("internet explorer") || p.contains("windows nt") { continue; }
-                if c.score > -500 { cands.push(c.path); }
+                if c.score <= -500 || install::is_wine_dir(&c.path) || install::is_wine_stub(&c.path) { continue; }
+                cands.push(c.path);
             }
             if !cands.is_empty() { break; }
         }
-        if cands.is_empty() { bail!("No game found in the installer's folder yet. Finish the installer, then try again."); }
-        self.update(id, |j| { j.exe = Some(cands[0].clone()); j.candidates = cands.into_iter().take(8).collect(); j.state = State::Ready });
+        if cands.is_empty() {
+            let msg = "The installer closed without installing the game. Run it again; if it fails the same way, its Proton log is in ~/steam-<id>.log on the Odin.".to_string();
+            self.update(id, |j| { j.state = State::NeedsSetup; j.error = Some(msg.clone()) });
+            bail!("{msg}");
+        }
+        self.update(id, |j| { j.exe = Some(cands[0].clone()); j.candidates = cands.into_iter().take(8).collect(); j.state = State::Ready; j.error = None });
         Ok(self.get(id).unwrap())
     }
 
@@ -194,19 +198,36 @@ impl Manager {
             if let Some(j) = s.jobs.iter_mut().find(|j| j.id == id) { j.state = State::Done; j.shortcut_id = Some(shortcut_id); j.exe = Some(exe); }
             self.save(&s);
         }
-        // A repack's own files are not needed once the installer has run.
-        if repack { if let Some(d) = job.dir { std::thread::spawn(move || { let _ = std::fs::remove_dir_all(d); }); } }
+        // A repack's installer files stay until the user deletes them from the game page.
+        let _ = repack;
         Ok(())
+    }
+
+    /// Installer files of a repack that is already installed, and their size.
+    pub fn installer_files(&self, appid: u32) -> Option<(PathBuf, u64)> {
+        let s = self.saved.lock().unwrap();
+        if !s.library.iter().any(|e| e.appid == appid) { return None; }
+        s.jobs.iter().filter(|j| j.appid == appid && j.setup_exe.is_some()).filter_map(|j| j.dir.clone()).find(|d| d.is_dir())
+            .map(|d| { let n = storage::dir_size(&d); (d, n) })
+    }
+
+    pub fn delete_installer_files(&self, appid: u32) -> Result<u64> {
+        let (d, n) = self.installer_files(appid).ok_or_else(|| anyhow!("no installer files"))?;
+        std::fs::remove_dir_all(&d)?;
+        Ok(n)
     }
 
     pub fn uninstall(&self, appid: u32) -> Result<Entry> {
         let mut s = self.saved.lock().unwrap();
         let i = s.library.iter().position(|e| e.appid == appid).ok_or_else(|| anyhow!("not installed"))?;
         let e = s.library.remove(i);
+        let repack_dirs: Vec<PathBuf> = s.jobs.iter().filter(|j| j.appid == appid && j.setup_exe.is_some()).filter_map(|j| j.dir.clone()).collect();
+        s.jobs.retain(|j| j.appid != appid || j.state.active());
         self.save(&s);
         let (dir, sid) = (e.dir.clone(), e.shortcut_id);
         std::thread::spawn(move || {
             let _ = std::fs::remove_dir_all(&dir);
+            for d in repack_dirs { let _ = std::fs::remove_dir_all(d); }
             let _ = std::fs::remove_dir_all(home().join(format!(".local/share/Steam/steamapps/compatdata/{sid}")));
             // Steam leaves a removed shortcut's custom art behind in every user's grid folder.
             if let Ok(users) = std::fs::read_dir(home().join(".local/share/Steam/userdata")) {
@@ -276,8 +297,18 @@ impl Manager {
                     self.update(id, |j| j.cache_progress = info.progress);
                     tokio::time::sleep(Duration::from_secs(3)).await;
                 }
-            } else if let Some(url) = &job.source.url {
-                vec![url.clone()]
+            } else if !job.source.urls.is_empty() || job.source.url.is_some() {
+                let mut mirrors = job.source.urls.clone();
+                if let Some(u) = &job.source.url { if !mirrors.contains(u) { mirrors.insert(0, u.clone()); } }
+                let mut last = anyhow!("no mirror");
+                let mut ok = None;
+                for m in mirrors {
+                    match rd.unrestrict(&m).await {
+                        Ok(_) => { ok = Some(m); break; }
+                        Err(e) => last = e,
+                    }
+                }
+                vec![ok.ok_or_else(|| anyhow!("Real-Debrid cannot download from this source's hosts: {last}"))?]
             } else {
                 bail!("source has no magnet or link");
             };

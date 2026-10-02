@@ -38,6 +38,22 @@ fn words(s: &str) -> Vec<String> {
     s.to_lowercase().chars().map(|c| if c.is_alphanumeric() { c } else { ' ' }).collect::<String>().split_whitespace().filter(|w| w.len() > 2).map(String::from).collect()
 }
 
+/// Wine fills every prefix with stand-in programs (wmplayer.exe, iexplore.exe, notepad.exe, ...).
+/// They carry this marker, so they can never be mistaken for a game.
+pub fn is_wine_stub(p: &Path) -> bool {
+    let Ok(b) = std::fs::read(p) else { return true };
+    let hay = &b[..b.len().min(4096)];
+    hay.windows(16).any(|w| w == b"Wine placeholder") || hay.windows(12).any(|w| w == b"Wine builtin")
+}
+
+/// Folders Wine creates in a fresh prefix. A game is never installed under these.
+pub fn is_wine_dir(p: &Path) -> bool {
+    let s = p.to_string_lossy().to_lowercase();
+    ["/drive_c/windows/", "/drive_c/users/", "/drive_c/programdata/", "/common files/", "/internet explorer/", "/windows media player/",
+     "/windows nt/", "/windows mail/", "/windows photo viewer/", "/windows defender/", "/windowspowershell/", "/msbuild/", "/reference assemblies/"]
+        .iter().any(|d| s.contains(d))
+}
+
 /// Rank .exe files: name close to the game title, shallow, large, and not a helper.
 pub fn find_game_exe(dir: &Path, title: &str) -> Vec<Candidate> {
     let skip = Regex::new(SKIP).unwrap();

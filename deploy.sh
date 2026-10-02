@@ -4,6 +4,13 @@
 set -eu
 HOST=armada@192.168.8.240
 WHAT=${1:-all}
+# Deploying reloads the plugin, which restarts mercuryd and pauses any running download.
+if [ "${FORCE:-0}" != 1 ] && [ "$WHAT" != build ]; then
+  busy=$(ssh "$HOST" 'curl -s 127.0.0.1:47800/jobs' 2>/dev/null | python3 -c 'import json,sys
+try: print(", ".join(j["name"] for j in json.load(sys.stdin) if j["state"] in ("queued","resolving","caching","downloading","extracting","installing")))
+except Exception: pass')
+  if [ -n "$busy" ]; then echo "Not deploying: active download ($busy). Re-run with FORCE=1 to deploy anyway."; exit 1; fi
+fi
 rsync -a --delete --exclude target --exclude node_modules --exclude dist --exclude .git ./ "$HOST:mercury/src/"
 if [ "$WHAT" = build ] || [ "$WHAT" = all ]; then
   ssh "$HOST" 'distrobox enter lsfg-vk-build -- bash -lc "cd ~/mercury/src/mercuryd && cargo build --release 2>&1 | grep -E \"^(error|warning: unused)|Finished|-->\" | head -40"'

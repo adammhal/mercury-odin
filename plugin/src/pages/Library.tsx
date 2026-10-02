@@ -1,8 +1,8 @@
-import { DialogButton, Focusable, Navigation } from "@decky/ui";
+import { Focusable, Navigation } from "@decky/ui";
 import { api, bytes, cdn } from "../api";
 import { usePoll } from "../hooks";
 import { gameId } from "../steam";
-import { C, page, scrollIntoView } from "../ui";
+import { Btn, C, FocusStyle, page, scrollIntoView } from "../ui";
 
 declare const SteamClient: any;
 
@@ -10,6 +10,7 @@ export function Library() {
   const [lib] = usePoll(api.library, 5000);
   return (
     <div style={page}>
+      <FocusStyle />
       <div style={{ padding: "16px 28px 48px" }}>
         <div style={{ fontSize: 18, fontWeight: 700, color: "#fff", marginBottom: 10 }}>
           Installed with Mercury <span style={{ fontSize: 14, color: C.dim, fontWeight: 500 }}>{bytes((lib ?? []).reduce((a, e) => a + e.size, 0))}</span>
@@ -24,8 +25,8 @@ export function Library() {
                 <div style={{ fontWeight: 700, fontSize: 14 }}>{e.name}</div>
                 <div style={{ fontSize: 12, color: C.dim, marginTop: 4 }}>{e.provider}{e.version ? ` ${e.version}` : ""} · {bytes(e.size)} · {new Date(e.installed * 1000).toLocaleDateString()}</div>
               </div>
-              <DialogButton style={{ width: 90 }} onClick={() => SteamClient.Apps.RunGame(gameId(e.shortcut_id), "", -1, 100)}>Play</DialogButton>
-              <DialogButton style={{ width: 90 }} onClick={() => Navigation.Navigate(`/mercury/game/${e.appid}`)}>Details</DialogButton>
+              <Btn style={{ width: 90 }} onClick={() => SteamClient.Apps.RunGame(gameId(e.shortcut_id), "", -1, 100)}>Play</Btn>
+              <Btn style={{ width: 90 }} onClick={() => Navigation.Navigate(`/mercury/game/${e.appid}`)}>Details</Btn>
             </Focusable>
           ))}
         </Focusable>

@@ -1,14 +1,12 @@
-import { ConfirmModal, DialogButton, Focusable, Navigation, showModal, Spinner, useParams } from "@decky/ui";
+import { ConfirmModal, Focusable, Navigation, showModal, Spinner, useParams } from "@decky/ui";
 import { toaster } from "@decky/api";
 import { useState } from "react";
 import { api, bytes, cdn, Source } from "../api";
 import { useOnce, usePoll } from "../hooks";
 import { gameId, removeShortcut } from "../steam";
-import { C, Chip, JobProgress, page, scrollIntoView } from "../ui";
+import { Btn, C, Chip, FOCUS, FocusStyle, JobProgress, page, scrollIntoView } from "../ui";
 
 declare const SteamClient: any;
-
-const btn = { height: 36, borderRadius: 3, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 600, fontSize: 14, color: "#fff" } as const;
 
 export function Game() {
   const { appid: raw } = useParams<{ appid: string }>();
@@ -21,6 +19,7 @@ export function Game() {
   const [busy, setBusy] = useState(false);
 
   const entry = lib?.find((e) => e.appid === appid);
+  const [setupFiles, , reloadSetupFiles] = useOnce(() => (entry ? api.installerFiles(appid) : Promise.resolve(null)), [entry?.appid]);
   const job = jobs?.find((j) => j.appid === appid && !["done", "cancelled"].includes(j.state));
   const free = status?.storage.free ?? 0;
 
@@ -42,6 +41,7 @@ export function Game() {
 
   return (
     <div style={page}>
+      <FocusStyle />
       <div style={{ position: "relative", height: 180, background: `url(${cdn(appid, "library_hero.jpg")}) center 30%/cover` }}>
         <div style={{ position: "absolute", inset: 0, background: `linear-gradient(transparent 40%,${C.bg})` }} />
         <img src={cdn(appid, "logo.png")} style={{ position: "absolute", left: 28, top: 24, maxWidth: 260, maxHeight: 80, filter: "drop-shadow(0 4px 18px rgba(0,0,0,.7))" }}
@@ -52,16 +52,20 @@ export function Game() {
       <div style={{ padding: "6px 28px 48px" }}>
         {entry && (
           <Focusable flow-children="horizontal" style={{ display: "flex", gap: 10, marginBottom: 18 }}>
-            <Focusable autoFocus onActivate={() => SteamClient.Apps.RunGame(gameId(entry.shortcut_id), "", -1, 100)}
-              style={{ ...btn, width: 140, background: "linear-gradient(90deg,#70d61d,#01a75b)" }}>Play</Focusable>
-            <Focusable onActivate={uninstall} style={{ ...btn, width: 120, background: C.panel2 }}>Uninstall</Focusable>
+            <Btn autoFocus onClick={() => SteamClient.Apps.RunGame(gameId(entry.shortcut_id), "", -1, 100)}
+              style={{ height: 36, width: 140, fontSize: 14, background: "linear-gradient(90deg,#70d61d,#01a75b)" }}>Play</Btn>
+            <Btn onClick={uninstall} style={{ height: 36, width: 120, fontSize: 14 }}>Uninstall</Btn>
+            {setupFiles && <Btn style={{ height: 36 }} onClick={() => showModal(<ConfirmModal strTitle="Delete installer files?" strOKButtonText="Delete"
+              strDescription={`The repack's setup files (${bytes(setupFiles.size)}) are not needed to play. Delete them only after the game launches and works.`}
+              onOK={async () => { const r = await api.deleteInstallerFiles(appid); toaster.toast({ title: "Mercury", body: `Freed ${bytes(r.freed)}` }); reloadSetupFiles(); }} />)}>
+              Delete installer files ({bytes(setupFiles.size)})</Btn>}
             <div style={{ alignSelf: "center", color: C.dim, fontSize: 13 }}>{entry.provider}{entry.version ? ` ${entry.version}` : ""} · {bytes(entry.size)}</div>
           </Focusable>
         )}
 
         {job && <div style={{ background: C.panel, borderRadius: 6, padding: "10px 16px", marginBottom: 18 }}>
           <JobProgress job={job} label="In your downloads" />
-          <DialogButton style={{ width: 160, marginTop: 6 }} onClick={() => Navigation.Navigate("/mercury/downloads")}>Open downloads</DialogButton>
+          <Btn style={{ width: 160, marginTop: 6 }} onClick={() => Navigation.Navigate("/mercury/downloads")}>Open downloads</Btn>
         </div>}
 
         <div style={{ fontSize: 13, fontWeight: 600, color: "#fff", margin: "4px 0 8px" }}>
@@ -75,18 +79,24 @@ export function Game() {
           {found?.sources.map((s, i) => {
             const est = found.installed_estimate[i] ?? 0;
             const tight = s.size_bytes + est > free;
+            const blocked = s.supported === false;
             return (
-              <Focusable key={`${s.provider}-${i}`} autoFocus={i === 0 && !entry} onActivate={() => !busy && !job && install(s, est)} onFocus={scrollIntoView}
-                style={{ display: "flex", alignItems: "center", justifyContent: "space-between", minHeight: 44, padding: "6px 12px", borderRadius: 5, marginBottom: 6, background: C.panel }}>
+              <Focusable key={`${s.provider}-${i}`} autoFocus={i === 0 && !entry} focusClassName={FOCUS} noFocusRing onFocus={scrollIntoView}
+                onActivate={() => !busy && !job && !blocked && install(s, est)}
+                style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", alignItems: "center", gap: 12, minHeight: 44,
+                  padding: "6px 12px", borderRadius: 5, marginBottom: 6, background: C.panel, opacity: blocked ? 0.5 : 1 }}>
                 <div style={{ minWidth: 0 }}>
-                  <div style={{ fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 520, fontSize: 13 }}>{s.name}</div>
-                  <div style={{ fontSize: 11, color: C.dim, marginTop: 2 }}>{s.size_bytes ? `${s.size} download · ~${bytes(est)} installed` : "Size unknown"}</div>
+                  <div style={{ fontWeight: 600, fontSize: 13, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.name}</div>
+                  <div style={{ fontSize: 11, color: C.dim, marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {blocked ? "Real-Debrid cannot download from this source's hosts" : s.size_bytes ? `${s.size} download · ~${bytes(est)} installed` : "Size unknown"}
+                  </div>
                 </div>
-                <div style={{ flex: "none" }}>
+                <div style={{ whiteSpace: "nowrap" }}>
                   <Chip tone="accent">{s.provider}</Chip>
                   {s.version && <Chip>{s.version}</Chip>}
                   {s.magnet ? <Chip>Torrent</Chip> : <Chip>Direct link</Chip>}
-                  {tight && <Chip tone="bad">Not enough space</Chip>}
+                  {blocked && <Chip tone="warn">Host not supported</Chip>}
+                  {tight && !blocked && <Chip tone="bad">Not enough space</Chip>}
                 </div>
               </Focusable>
             );

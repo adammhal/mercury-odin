@@ -5,9 +5,14 @@ export function usePoll<T>(load: () => Promise<T>, ms: number, deps: unknown[] =
   const [data, setData] = useState<T>();
   const [err, setErr] = useState<string>();
   const tick = useRef(0);
+  const fails = useRef(0);
   const run = () => {
     const mine = ++tick.current;
-    load().then((d) => { if (mine === tick.current) { setData(d); setErr(undefined); } }, (e) => setErr(String(e?.message ?? e)));
+    load().then(
+      (d) => { if (mine === tick.current) { fails.current = 0; setData(d); setErr(undefined); } },
+      // One failed poll (the engine restarting) is not worth showing; two in a row is.
+      (e) => { if (++fails.current >= 2 || !ms) setErr(String(e?.message ?? e)); },
+    );
   };
   useEffect(() => {
     run();

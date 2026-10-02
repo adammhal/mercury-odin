@@ -1,13 +1,13 @@
-import { ConfirmModal, DialogButton, Focusable, showModal } from "@decky/ui";
+import { ConfirmModal, Focusable, showModal } from "@decky/ui";
 import { toaster } from "@decky/api";
 import { api, cdn, Job } from "../api";
 import { usePoll } from "../hooks";
 import { runInstaller } from "../steam";
-import { C, JobProgress, page } from "../ui";
+import { Btn, C, FocusStyle, JobProgress, page } from "../ui";
 
 function Actions({ job, reload }: { job: Job; reload: () => void }) {
   const act = (a: string) => async () => { try { await api.act(job.id, a); } catch (e: any) { toaster.toast({ title: "Mercury", body: e.message }); } reload(); };
-  const b = (label: string, fn: () => void) => <DialogButton key={label} style={{ minWidth: 0, width: 110, height: 30, fontSize: 12, padding: "0 8px" }} onClick={fn}>{label}</DialogButton>;
+  const b = (label: string, fn: () => void) => <Btn key={label} style={{ width: 110, height: 30, fontSize: 12 }} onClick={fn}>{label}</Btn>;
   const out = [];
   if (["queued", "resolving", "caching", "downloading"].includes(job.state)) out.push(b("Pause", act("pause")));
   if (["paused", "failed"].includes(job.state)) out.push(b(job.state === "failed" ? "Retry" : "Resume", act("resume")));
@@ -26,6 +26,7 @@ export function Downloads() {
   const list = (jobs ?? []).slice().reverse();
   return (
     <div style={page}>
+      <FocusStyle />
       <div style={{ padding: "16px 28px 48px" }}>
         <div style={{ fontSize: 18, fontWeight: 700, color: "#fff", marginBottom: 10 }}>Downloads</div>
         {err && <div style={{ color: C.bad }}>Mercury engine is not responding: {err}</div>}

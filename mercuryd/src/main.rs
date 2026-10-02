@@ -106,6 +106,10 @@ async fn job_action(State(a): State<App>, Path((id, act)): Path<(u64, String)>, 
 
 async fn library(State(a): State<App>) -> R { Ok(Json(json!(a.m.library()))) }
 async fn uninstall(State(a): State<App>, Path(id): Path<u32>) -> R { Ok(Json(json!(a.m.uninstall(id)?))) }
+async fn installer_files(State(a): State<App>, Path(id): Path<u32>) -> R {
+    Ok(Json(match a.m.installer_files(id) { Some((d, n)) => json!({ "dir": d, "size": n }), None => json!(null) }))
+}
+async fn delete_installer_files(State(a): State<App>, Path(id): Path<u32>) -> R { Ok(Json(json!({ "freed": a.m.delete_installer_files(id)? }))) }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -127,6 +131,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/jobs/{id}/{act}", post(job_action))
         .route("/library", get(library))
         .route("/library/{appid}/uninstall", post(uninstall))
+        .route("/library/{appid}/installer-files", get(installer_files).delete(delete_installer_files))
         .with_state(App { m });
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", PORT)).await?;
     tracing::info!("mercuryd {} on 127.0.0.1:{PORT}", env!("CARGO_PKG_VERSION"));

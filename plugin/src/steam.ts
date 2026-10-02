@@ -39,12 +39,20 @@ export async function addToSteam(job: Job, exe = job.exe ?? ""): Promise<number>
   return id;
 }
 
-/** Repacks: add setup.exe as the shortcut, run it through Proton, and let the user click through it. */
+/** Repacks: run setup.exe through Proton from a Steam shortcut and let the user click through it.
+ * A second attempt reuses the same shortcut, so the same Proton prefix. */
 export async function runInstaller(job: Job): Promise<number> {
   if (!job.setup_exe) throw new Error("No installer");
-  const id = Number(await SteamClient.Apps.AddShortcut(job.name, job.setup_exe, dirOf(job.setup_exe), ""));
-  if (!id) throw new Error("Steam did not create the shortcut");
-  await configure(id, `${job.name} (installer)`);
+  let id = job.shortcut_id ?? 0;
+  if (!id) {
+    id = Number(await SteamClient.Apps.AddShortcut(job.name, job.setup_exe, dirOf(job.setup_exe), ""));
+    if (!id) throw new Error("Steam did not create the shortcut");
+    const cfg = await api.config();
+    SteamClient.Apps.SetShortcutName(id, `${job.name} (installer)`);
+    await SteamClient.Apps.SpecifyCompatTool(id, cfg.proton_tool);
+  }
+  // No frame-generation wrapper for an installer; PROTON_LOG writes ~/steam-<id>.log if it fails.
+  SteamClient.Apps.SetShortcutLaunchOptions(id, "PROTON_LOG=1 /usr/libexec/armada/armada-game-launch %command%");
   await api.act(job.id, "setup-launched", { shortcut_id: id });
   SteamClient.Apps.RunGame(gameId(id), "", -1, 100);
   return id;

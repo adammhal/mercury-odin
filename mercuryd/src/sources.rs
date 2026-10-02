@@ -18,7 +18,15 @@ pub struct Source {
     pub url: Option<String>,
     #[serde(default)]
     pub version: Option<String>,
+    /// Every mirror for a direct-link source; `url` is the preferred one.
+    #[serde(default)]
+    pub urls: Vec<String>,
+    /// False when Real-Debrid supports none of the source's hosts, so it cannot be downloaded.
+    #[serde(default = "yes")]
+    pub supported: bool,
 }
+
+fn yes() -> bool { true }
 
 #[derive(Deserialize)]
 struct ServerItem {
@@ -42,10 +50,41 @@ struct RipItem {
     #[serde(default)]
     size: String,
     url: String,
+    #[serde(default)]
+    uris: Vec<String>,
     version: Option<String>,
 }
 
 static RIP_CACHE: Mutex<Option<(Instant, Vec<RipItem>)>> = Mutex::new(None);
+static RD_HOSTS: Mutex<Option<(Instant, Vec<String>)>> = Mutex::new(None);
+
+fn host(url: &str) -> String {
+    url.split("://").nth(1).unwrap_or(url).split('/').next().unwrap_or("").trim_start_matches("www.").to_lowercase()
+}
+
+/// Domains Real-Debrid can download from. Public endpoint, cached for a day.
+async fn rd_hosts(http: &reqwest::Client) -> Vec<String> {
+    if let Some((t, v)) = RD_HOSTS.lock().unwrap().as_ref() {
+        if t.elapsed() < Duration::from_secs(86400) { return v.clone(); }
+    }
+    match http.get("https://api.real-debrid.com/rest/1.0/hosts/domains").send().await {
+        Ok(r) => match r.json::<Vec<String>>().await {
+            Ok(v) => { *RD_HOSTS.lock().unwrap() = Some((Instant::now(), v.clone())); v }
+            Err(_) => vec![],
+        },
+        Err(_) => vec![],
+    }
+}
+
+/// Scraped titles sometimes carry the store page text ("... Storage: 12 GB GAME INFO Genre: ...").
+pub fn clean_title(t: &str) -> String {
+    let mut s = t.trim().to_string();
+    for marker in [" Storage:", " GAME INFO", " Genre:", " Developer:", " Platform:", " Game Size:", " Released By:", " Release Date:", " Size:"] {
+        if let Some(i) = s.find(marker) { s.truncate(i); }
+    }
+    let s = s.trim_end_matches(|c: char| c == '-' || c == '|' || c.is_whitespace()).to_string();
+    if s.chars().count() > 110 { s.chars().take(107).collect::<String>() + "…" } else { s }
+}
 
 pub fn parse_size(s: &str) -> u64 {
     let s = s.trim().to_uppercase();
@@ -124,31 +163,42 @@ pub async fn search(http: &reqwest::Client, cfg: &Config, name: &str) -> (Vec<So
                 out.push((score, Source {
                     size_bytes: parse_size(&i.size),
                     size: i.size,
-                    name: i.name,
+                    name: clean_title(&i.name),
                     provider: if i.provider.is_empty() { "Server".into() } else { i.provider },
                     magnet: i.magnet,
                     url: i.url,
                     version: None,
+                    urls: vec![],
+                    supported: true,
                 }));
             }
         }
         Err(e) => errors.push(e.to_string()),
     }
+    let hosts = if rip.is_empty() { vec![] } else { rd_hosts(http).await };
     for r in rip {
         let score = similarity(name, &r.title);
         if score >= 0.75 {
+            let mut urls = r.uris.clone();
+            if !urls.contains(&r.url) { urls.insert(0, r.url.clone()); }
+            // Put mirrors Real-Debrid can fetch first. An empty host list means the check failed; assume yes.
+            urls.sort_by_key(|u| !hosts.contains(&host(u)));
+            let supported = hosts.is_empty() || urls.iter().any(|u| hosts.contains(&host(u)));
             out.push((score, Source {
                 size_bytes: parse_size(&r.size),
                 size: r.size,
-                name: r.title,
+                name: clean_title(&r.title),
                 provider: "SteamRIP".into(),
                 magnet: None,
-                url: Some(r.url),
+                url: urls.first().cloned(),
                 version: r.version.filter(|v| v != "Unknown"),
+                urls,
+                supported,
             }));
         }
     }
-    out.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
+    // Best match first; sources that cannot be downloaded go to the bottom.
+    out.sort_by(|a, b| b.1.supported.cmp(&a.1.supported).then(b.0.partial_cmp(&a.0).unwrap()));
     (out.into_iter().map(|(_, s)| s).collect(), errors)
 }
 
@@ -160,6 +210,11 @@ mod tests {
         assert_eq!(parse_size("1.5 GB"), (1.5 * (1u64 << 30) as f64) as u64);
         assert_eq!(parse_size("814 MB"), 814 << 20);
         assert_eq!(parse_size("N/A"), 0);
+    }
+    #[test]
+    fn titles() {
+        assert_eq!(clean_title("Skate Story Free Download 12 Storage: 12 GB available space GAME INFO Genre: Action"), "Skate Story Free Download 12");
+        assert_eq!(host("https://www.gofile.io/d/abc"), "gofile.io");
     }
     #[test]
     fn matching() {
