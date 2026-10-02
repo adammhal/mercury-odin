@@ -1,3 +1,4 @@
+mod browser;
 mod config;
 mod download;
 mod extract;
@@ -88,8 +89,24 @@ async fn sources(State(a): State<App>, Query(q): Query<SrcQ>) -> R {
 async fn list_jobs(State(a): State<App>) -> R { Ok(Json(json!(a.m.jobs()))) }
 
 #[derive(Deserialize)]
-struct NewJob { appid: u32, name: String, source: sources::Source }
-async fn new_job(State(a): State<App>, Json(j): Json<NewJob>) -> R { Ok(Json(json!(a.m.enqueue(j.appid, j.name, j.source)?))) }
+struct NewJob { appid: u32, name: String, source: sources::Source, #[serde(default)] local_file: Option<std::path::PathBuf> }
+async fn new_job(State(a): State<App>, Json(j): Json<NewJob>) -> R {
+    let files = match &j.local_file {
+        Some(f) => {
+            // Only files in the browser's download folder may be handed to a job.
+            let dir = config::browser_downloads_dir();
+            let ok = f.parent().is_some_and(|p| p == dir) && f.is_file();
+            if !ok { return Err(anyhow::anyhow!("{} is not a finished download in {}", f.display(), dir.display()).into()); }
+            browser::with_siblings(f)
+        }
+        None => vec![],
+    };
+    Ok(Json(json!(a.m.enqueue(j.appid, j.name, j.source, files)?)))
+}
+
+#[derive(Deserialize)]
+struct Since { #[serde(default)] since: u64 }
+async fn browser_downloads(Query(q): Query<Since>) -> R { Ok(Json(json!(browser::list(&config::browser_downloads_dir(), q.since)))) }
 
 #[derive(Deserialize, Default)]
 struct Act { #[serde(default)] shortcut_id: Option<u32>, #[serde(default)] exe: Option<std::path::PathBuf> }
@@ -134,6 +151,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/steam/art/{id}", get(art))
         .route("/sources", get(sources))
         .route("/jobs", get(list_jobs).post(new_job))
+        .route("/browser/downloads", get(browser_downloads))
         .route("/jobs/clear", post(clear_jobs))
         .route("/jobs/{id}/{act}", post(job_action))
         .route("/library", get(library))

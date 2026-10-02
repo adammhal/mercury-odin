@@ -3,6 +3,7 @@ import { toaster } from "@decky/api";
 import { useState } from "react";
 import { api, bytes, cdn, Source } from "../api";
 import { useOnce, usePoll } from "../hooks";
+import { downloadInBrowser } from "../browser";
 import { gameId, removeShortcut } from "../steam";
 import { Btn, C, Chip, FOCUS, FocusStyle, JobProgress, page, scrollIntoView } from "../ui";
 
@@ -34,6 +35,13 @@ export function Game() {
     showModal(<ConfirmModal strTitle={`Install ${app?.name}?`} strOKButtonText="Install" onOK={go}
       strDescription={`${s.provider} · ${s.name}\n\n${s.repack ? "This is a repack. Its installer currently gets stuck unpacking on the Odin (32-bit x86 emulation). A pre-installed source is more likely to work.\n\n" : ""}Download ${s.size || "unknown size"}, about ${bytes(est)} installed. Needs about ${bytes(need)} free while installing; ${bytes(free)} is free.${!status?.rd_key_set ? "\n\nAdd your Real-Debrid key in Mercury settings first." : ""}`} />);
   };
+
+  const viaBrowser = (s: Source) => showModal(<ConfirmModal strTitle="Download in your browser" strOKButtonText="Open Firefox"
+    strDescription={`Real-Debrid cannot fetch from this host, so you download it yourself.\n\n1. Mercury opens Firefox on the download page.\n2. Tap the host's Download button (touch is easiest). Some hosts show a short check first.\n3. When the file finishes, Mercury installs ${app?.name ?? "the game"} on its own.\n\nPress the Steam button and exit Firefox when you are done.`}
+    onOK={async () => {
+      try { await downloadInBrowser(appid, app!.name, s); }
+      catch (e: any) { toaster.toast({ title: "Mercury", body: e.message }); }
+    }} />);
 
   const uninstall = () => showModal(<ConfirmModal strTitle={`Uninstall ${entry?.name}?`} strOKButtonText="Uninstall"
     strDescription={`Deletes ${bytes(entry?.size ?? 0)} and removes the Steam shortcut.`}
@@ -82,20 +90,20 @@ export function Game() {
             const blocked = s.supported === false;
             return (
               <Focusable key={`${s.provider}-${i}`} autoFocus={i === 0 && !entry} focusClassName={FOCUS} noFocusRing onFocus={scrollIntoView}
-                onActivate={() => !busy && !job && !blocked && install(s, est)}
+                onActivate={() => !busy && !job && (blocked ? viaBrowser(s) : install(s, est))}
                 style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", alignItems: "center", gap: 12, minHeight: 44,
-                  padding: "6px 12px", borderRadius: 5, marginBottom: 6, background: C.panel, opacity: blocked ? 0.5 : 1 }}>
+                  padding: "6px 12px", borderRadius: 5, marginBottom: 6, background: C.panel, opacity: 1 }}>
                 <div style={{ minWidth: 0 }}>
                   <div style={{ fontWeight: 600, fontSize: 13, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.name}</div>
                   <div style={{ fontSize: 11, color: C.dim, marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                    {blocked ? "Real-Debrid cannot download from this source's hosts" : s.size_bytes ? `${s.size} download · ~${bytes(est)} installed` : "Size unknown"}
+                    {blocked ? `${s.size || "Unknown size"} · Real-Debrid can't fetch this host; download it in Firefox` : s.size_bytes ? `${s.size} download · ~${bytes(est)} installed` : "Size unknown"}
                   </div>
                 </div>
                 <div style={{ whiteSpace: "nowrap", maxWidth: 380, overflow: "hidden", textAlign: "right" }}>
                   <Chip tone="accent">{s.provider}</Chip>
                   {s.version && <Chip>{s.version}</Chip>}
                   {s.magnet ? <Chip>Torrent</Chip> : <Chip>Direct link</Chip>}
-                  {blocked && <Chip tone="warn">Host not supported</Chip>}
+                  {blocked && <Chip tone="warn">Browser download</Chip>}
                   {s.repack && !blocked && <Chip tone="warn">May not install on ARM</Chip>}
                   {tight && !blocked && <Chip tone="bad">Not enough space</Chip>}
                 </div>

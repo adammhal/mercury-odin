@@ -29,6 +29,8 @@ pub struct Job {
     #[serde(default)] pub error: Option<String>,
     #[serde(default)] pub torrent_id: Option<String>,
     #[serde(default)] pub links: Vec<Link>,
+    /// Files the user downloaded in the browser. When set, resolving and downloading are skipped.
+    #[serde(default)] pub local_files: Vec<PathBuf>,
     #[serde(default)] pub dir: Option<PathBuf>,
     #[serde(default)] pub setup_exe: Option<PathBuf>,
     #[serde(default)] pub exe: Option<PathBuf>,
@@ -122,14 +124,16 @@ impl Manager {
 
     pub fn library(&self) -> Vec<Entry> { self.saved.lock().unwrap().library.clone() }
 
-    pub fn enqueue(&self, appid: u32, name: String, source: Source) -> Result<Job> {
+    pub fn enqueue(&self, appid: u32, name: String, source: Source, local_files: Vec<PathBuf>) -> Result<Job> {
         let mut s = self.saved.lock().unwrap();
         if s.jobs.iter().any(|j| j.appid == appid && j.state.active()) {
             bail!("{name} is already in the queue");
         }
         s.next_id += 1;
-        let job = Job { id: s.next_id, appid, name, source, state: State::Queued, error: None, torrent_id: None, links: vec![], dir: None,
+        let job = Job { id: s.next_id, appid, name, source, state: State::Queued, error: None, torrent_id: None, links: vec![], local_files: vec![], dir: None,
             setup_exe: None, exe: None, candidates: vec![], shortcut_id: None, setup_started: None, cache_progress: 0.0, done: 0, total: 0, speed: 0, created: now() };
+        let mut job = job;
+        job.local_files = local_files;
         s.jobs.push(job.clone());
         self.save(&s);
         drop(s);
@@ -317,8 +321,23 @@ impl Manager {
 
     async fn process(&self, id: u64, prog: &Arc<download::Progress>, stop: &Arc<AtomicBool>) -> Result<()> {
         let cfg = self.cfg.lock().unwrap().clone();
-        let rd = Rd::new(self.http.clone(), &cfg.rd_key)?;
         let mut job = self.get(id).ok_or_else(|| anyhow!("job vanished"))?;
+        let dl_dir = cfg.downloads_dir.join(id.to_string());
+
+        if !job.local_files.is_empty() {
+            // Browser download: take the user's file(s) out of ~/Downloads and go straight to extraction.
+            tokio::fs::create_dir_all(&dl_dir).await?;
+            for f in &job.local_files {
+                if !f.exists() { continue; }
+                let to = dl_dir.join(f.file_name().unwrap_or_default());
+                if tokio::fs::rename(f, &to).await.is_err() {
+                    tokio::fs::copy(f, &to).await?;
+                    let _ = tokio::fs::remove_file(f).await;
+                }
+            }
+            return self.finish(id, &cfg, None, &dl_dir).await;
+        }
+        let rd = Rd::new(self.http.clone(), &cfg.rd_key)?;
 
         if job.links.is_empty() {
             self.update(id, |j| j.state = State::Resolving);
@@ -372,7 +391,6 @@ impl Manager {
             job = self.get(id).unwrap();
         }
 
-        let dl_dir = cfg.downloads_dir.join(id.to_string());
         tokio::fs::create_dir_all(&dl_dir).await?;
         self.update(id, |j| j.state = State::Downloading);
         prog.total.store(job.links.iter().map(|l| l.size).sum(), Ordering::Relaxed);
@@ -391,13 +409,18 @@ impl Manager {
             }
         }
         if self.stopped(id, stop) { return Ok(()); }
+        self.finish(id, &cfg, Some(&rd), &dl_dir).await
+    }
 
+    /// Extract what is in `dl_dir`, then decide between a repack installer and a ready game.
+    async fn finish(&self, id: u64, cfg: &Config, rd: Option<&Rd>, dl_dir: &std::path::Path) -> Result<()> {
+        let job = self.get(id).ok_or_else(|| anyhow!("job vanished"))?;
         self.update(id, |j| j.state = State::Extracting);
         let dir = cfg.games_dir.join(slug(&job.name));
         if dir.exists() { tokio::fs::remove_dir_all(&dir).await?; }
-        extract::extract_all(&dl_dir, &dir).await?;
-        let _ = tokio::fs::remove_dir_all(&dl_dir).await;
-        if let Some(t) = &job.torrent_id { let _ = rd.delete(t).await; }
+        extract::extract_all(dl_dir, &dir).await?;
+        let _ = tokio::fs::remove_dir_all(dl_dir).await;
+        if let (Some(t), Some(rd)) = (&job.torrent_id, rd) { let _ = rd.delete(t).await; }
 
         if let Some(setup) = install::find_setup(&dir) {
             self.update(id, |j| { j.dir = Some(dir.clone()); j.setup_exe = Some(setup); j.state = State::NeedsSetup });

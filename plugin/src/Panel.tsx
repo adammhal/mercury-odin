@@ -2,6 +2,7 @@ import { ButtonItem, Navigation, PanelSection, PanelSectionRow } from "@decky/ui
 import { callable, useQuickAccessVisible } from "@decky/api";
 import { useEffect, useState } from "react";
 import { api } from "./api";
+import { cancelBrowserDownload, pending } from "./browser";
 import { usePoll } from "./hooks";
 import { C, JobProgress } from "./ui";
 
@@ -38,6 +39,12 @@ export function Panel() {
       {store && (
         <PanelSection title="Store page">
           <PanelSectionRow><ButtonItem layout="below" onClick={() => go(`/mercury/game/${store.appid}`)}>Get {store.name}</ButtonItem></PanelSectionRow>
+        </PanelSection>
+      )}
+      {pending && (
+        <PanelSection title="Browser download">
+          <PanelSectionRow><div style={{ fontSize: 12, color: C.dim }}>Waiting for {pending.name} in Firefox. Mercury installs it as soon as the file finishes.</div></PanelSectionRow>
+          <PanelSectionRow><ButtonItem layout="below" onClick={() => { cancelBrowserDownload(); setStore((x) => x); }}>Stop waiting</ButtonItem></PanelSectionRow>
         </PanelSection>
       )}
       <PanelSection title={active.length ? "Downloads" : "Mercury"}>

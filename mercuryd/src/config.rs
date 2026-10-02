@@ -13,6 +13,8 @@ pub struct Config {
     pub enable_steamrip: bool,
     pub proton_tool: String,
     pub launch_options: String,
+    /// Steam shortcut that runs Firefox for hosts Real-Debrid cannot download from.
+    pub browser_shortcut_id: Option<u32>,
 }
 
 impl Default for Config {
@@ -27,12 +29,17 @@ impl Default for Config {
             enable_steamrip: true,
             proton_tool: "proton-experimental-arm64".into(),
             launch_options: "/usr/libexec/armada/armada-game-launch ~/.lsfg %command%".into(),
+            browser_shortcut_id: None,
         }
     }
 }
 
 pub fn home() -> PathBuf {
     std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| "/var/home/armada".into())
+}
+
+pub fn browser_downloads_dir() -> PathBuf {
+    home().join("Downloads")
 }
 
 pub fn data_dir() -> PathBuf {

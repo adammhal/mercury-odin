@@ -11,6 +11,7 @@ import { Library } from "./pages/Library";
 import { Search } from "./pages/Search";
 import { Settings } from "./pages/Settings";
 import { addToSteam, onAppExit } from "./steam";
+import { checkBrowserDownload } from "./browser";
 
 const ROUTES: [string, FC][] = [
   ["/mercury", Home], ["/mercury/game/:appid", Game], ["/mercury/downloads", Downloads],
@@ -40,7 +41,7 @@ function startWatcher() {
       }
     }
   };
-  const timer = setInterval(tick, 2000);
+  const timer = setInterval(() => { tick(); checkBrowserDownload(); }, 2000);
   // When a repack installer closes, look for the installed game and add it.
   const stopExit = onAppExit(async (appid) => {
     const j = jobs.find((x) => x.state === "installing" && x.shortcut_id === appid);
