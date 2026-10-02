@@ -265,7 +265,11 @@ pub async fn search(http: &reqwest::Client, cfg: &Config, name: &str, refresh: b
         }
     }
     // Best match first; sources that cannot be downloaded go to the bottom.
-    for (_, src) in out.iter_mut() { if !src.declared { src.repack = is_repack(&src.provider, &src.name); } }
+    for (_, src) in out.iter_mut() {
+        if !src.declared { src.repack = is_repack(&src.provider, &src.name); }
+        // Feeds often leave the version empty while the release name carries it ("... (v1.2.0.6 + Co-op)").
+        if src.version.is_none() { src.version = version_in(&src.name); }
+    }
     out.sort_by(|a, b| b.1.supported.cmp(&a.1.supported).then(a.1.repack.cmp(&b.1.repack)).then(b.0.partial_cmp(&a.0).unwrap()));
     (out.into_iter().map(|(_, s)| s).collect(), errors)
 }
