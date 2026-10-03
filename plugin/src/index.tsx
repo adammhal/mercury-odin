@@ -123,20 +123,25 @@ function startWatcher() {
   return () => { clearInterval(timer); clearInterval(daily); stopExit(); stopStoreButton(); stopBattery(); };
 }
 
-/** Steam's Quick Access shows "?h ?m" for the charging time on this device: its client sends -1 while charging.
- * Fill in the kernel's estimate whenever Steam has none. Discharging time is Steam's own and left alone. */
+/** Two gaps in what Steam's client reports on this device, filled from the kernel:
+ * - charging time: it sends -1 while charging, so Quick Access shows "?h ?m".
+ * - full: the battery keeps reporting Charging at 100 % (it trickle-tops off), and Steam caps the header at 99 %
+ *   until the state is Full. Report Full once the kernel says 100 % on the charger.
+ * Discharging time is Steam's own and left alone. */
 function fillChargingTime(): () => void {
-  const CHARGING = 2; // Steam's EBatteryState while charging
+  const CHARGING = 2, FULL = 3; // Steam's EBatteryState
   // The last value Mercury put there, kept on window so a reloaded plugin still knows it is ours.
   // Keep refreshing it; never replace a value Steam sent.
   const w = window as any;
   const fill = async () => {
     const s = (window as any).SystemPowerStore;
     if (!s || s.m_eBatteryState !== CHARGING) return;
-    if (s.m_nBatterySecondsRemaining >= 0 && s.m_nBatterySecondsRemaining !== w.__mercuryChargeSecs) return;
     try {
       const b = await api.battery();
-      if (b.charging && b.seconds_to_full && s.m_eBatteryState === CHARGING) s.m_nBatterySecondsRemaining = w.__mercuryChargeSecs = b.seconds_to_full;
+      if (!b.charging || s.m_eBatteryState !== CHARGING) return;
+      if ((b.percent ?? 0) >= 100) { s.m_eBatteryState = FULL; s.m_bSayFull = true; return; }
+      if (s.m_nBatterySecondsRemaining >= 0 && s.m_nBatterySecondsRemaining !== w.__mercuryChargeSecs) return;
+      if (b.seconds_to_full) s.m_nBatterySecondsRemaining = w.__mercuryChargeSecs = b.seconds_to_full;
     } catch { /* engine restarting */ }
   };
   // Steam overwrites the value on each battery update; refill right after it.

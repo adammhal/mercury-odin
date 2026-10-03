@@ -4,7 +4,7 @@ use serde::Serialize;
 use std::path::Path;
 
 #[derive(Serialize, Default)]
-pub struct Battery { pub charging: bool, pub seconds_to_full: Option<i64> }
+pub struct Battery { pub charging: bool, pub percent: Option<i64>, pub seconds_to_full: Option<i64> }
 
 fn num(dir: &Path, f: &str) -> Option<i64> { std::fs::read_to_string(dir.join(f)).ok()?.trim().parse().ok() }
 
@@ -18,7 +18,7 @@ pub fn read() -> Battery {
             let (full, now, cur) = (num(&d, "charge_full")?, num(&d, "charge_now")?, num(&d, "current_now")?);
             (cur > 0 && full > now).then(|| (full - now) * 3600 / cur)
         });
-        return Battery { charging, seconds_to_full: if charging { secs } else { None } };
+        return Battery { charging, percent: num(&d, "capacity"), seconds_to_full: if charging { secs } else { None } };
     }
     Battery::default()
 }
