@@ -127,14 +127,16 @@ function startWatcher() {
  * Fill in the kernel's estimate whenever Steam has none. Discharging time is Steam's own and left alone. */
 function fillChargingTime(): () => void {
   const CHARGING = 2; // Steam's EBatteryState while charging
-  let ours = -1; // the last value Mercury put there; keep refreshing it, never replace a value Steam sent
+  // The last value Mercury put there, kept on window so a reloaded plugin still knows it is ours.
+  // Keep refreshing it; never replace a value Steam sent.
+  const w = window as any;
   const fill = async () => {
     const s = (window as any).SystemPowerStore;
     if (!s || s.m_eBatteryState !== CHARGING) return;
-    if (s.m_nBatterySecondsRemaining >= 0 && s.m_nBatterySecondsRemaining !== ours) return;
+    if (s.m_nBatterySecondsRemaining >= 0 && s.m_nBatterySecondsRemaining !== w.__mercuryChargeSecs) return;
     try {
       const b = await api.battery();
-      if (b.charging && b.seconds_to_full && s.m_eBatteryState === CHARGING) s.m_nBatterySecondsRemaining = ours = b.seconds_to_full;
+      if (b.charging && b.seconds_to_full && s.m_eBatteryState === CHARGING) s.m_nBatterySecondsRemaining = w.__mercuryChargeSecs = b.seconds_to_full;
     } catch { /* engine restarting */ }
   };
   // Steam overwrites the value on each battery update; refill right after it.
