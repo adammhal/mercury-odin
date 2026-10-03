@@ -119,7 +119,27 @@ function startWatcher() {
     try { await api.act(j.id, "setup-done"); }
     catch (e: any) { toaster.toast({ title: "Mercury", body: e.message }); }
   });
-  return () => { clearInterval(timer); clearInterval(daily); stopExit(); stopStoreButton(); };
+  const stopBattery = fillChargingTime();
+  return () => { clearInterval(timer); clearInterval(daily); stopExit(); stopStoreButton(); stopBattery(); };
+}
+
+/** Steam's Quick Access shows "?h ?m" for the charging time on this device: its client sends -1 while charging.
+ * Fill in the kernel's estimate whenever Steam has none. Discharging time is Steam's own and left alone. */
+function fillChargingTime(): () => void {
+  const CHARGING = 2; // Steam's EBatteryState while charging
+  const fill = async () => {
+    const s = (window as any).SystemPowerStore;
+    if (!s || s.m_eBatteryState !== CHARGING || s.m_nBatterySecondsRemaining >= 0) return;
+    try {
+      const b = await api.battery();
+      if (b.charging && b.seconds_to_full && s.m_eBatteryState === CHARGING) s.m_nBatterySecondsRemaining = b.seconds_to_full;
+    } catch { /* engine restarting */ }
+  };
+  // Steam overwrites the value on each battery update; refill right after it.
+  const h = SteamClient.System.RegisterForBatteryStateChanges(() => setTimeout(fill, 0));
+  const t = setInterval(fill, 15000);
+  fill();
+  return () => { clearInterval(t); h?.unregister?.(); };
 }
 
 export default definePlugin(() => {

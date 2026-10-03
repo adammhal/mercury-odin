@@ -8,6 +8,7 @@ mod install;
 mod jobs;
 mod rd;
 mod shortcuts;
+mod battery;
 mod sources;
 mod steam;
 mod storage;
@@ -311,6 +312,7 @@ async fn main() -> anyhow::Result<()> {
     m.start();
     let app = Router::new()
         .route("/status", get(status))
+        .route("/battery", get(|| async { Json(battery::read()) }))
         .route("/config", get(get_config).put(put_config))
         .route("/rd/check", get(rd_check))
         .route("/steam/wishlist", get(wishlist))

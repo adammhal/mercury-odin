@@ -69,6 +69,7 @@ export const api = {
   mountCard: (device: string) => req<{ message: string }>("/import/mount", "POST", { device }),
   importGame: (path: string, appid: number, name: string, keep_in_place: boolean) => req<Job>("/import", "POST", { path, appid, name, keep_in_place }),
   uninstall: (appid: number) => req<Entry>(`/library/${appid}/uninstall`, "POST", {}),
+  battery: () => req<{ charging: boolean; seconds_to_full: number | null }>("/battery"),
   locations: () => req<Location[]>("/locations"),
   moveGame: (appid: number, to: string) => req<Entry>(`/library/${appid}/move`, "POST", { to }),
   launchOptions: (exe: string) => req<{ launch_options: string }>("/launch-options", "POST", { exe }),
