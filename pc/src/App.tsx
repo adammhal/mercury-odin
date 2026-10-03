@@ -13,6 +13,7 @@ import { Downloads } from "./pages/Downloads";
 import { Library } from "./pages/Library";
 import { Settings } from "./pages/Settings";
 import { checkBrowserDownload } from "./browser";
+import { pc } from "./pcapi";
 
 // On the PC, a finished game goes to warmUP instead of Steam.
 STATE_LABEL.ready = "Adding to warmUP";
@@ -31,6 +32,33 @@ function quit() {
   showModal(<ConfirmModal strTitle="Close Mercury?" strOKButtonText="Close" strDescription="Downloads keep going in the background, and finished games still appear in warmUP."
     onOK={() => { getCurrentWindow().close().catch(() => window.close()); }} />);
 }
+
+const POWER: { key: "sleep" | "restart" | "shutdown" | "signout"; label: string; ask: string; ok: string }[] = [
+  { key: "sleep", label: "Sleep", ask: "Put the PC to sleep?", ok: "Sleep" },
+  { key: "restart", label: "Restart", ask: "Restart the PC?", ok: "Restart" },
+  { key: "shutdown", label: "Shut down", ask: "Shut down the PC?", ok: "Shut down" },
+  { key: "signout", label: "Sign out", ask: "Sign out of Windows?", ok: "Sign out" },
+];
+
+function PowerMenu({ closeModal }: { closeModal?: () => void }) {
+  const pick = (o: typeof POWER[number]) => {
+    closeModal?.();
+    showModal(<ConfirmModal strTitle={o.ask} strOKButtonText={o.ok} strDescription="Downloads in progress will be interrupted."
+      onOK={() => { pc.power(o.key).catch((e) => toast(String(e.message ?? e), "Power")); }} />);
+  };
+  return (
+    <div style={{ width: 360, background: "#171d25", borderRadius: 6, padding: "18px 20px", boxShadow: "0 10px 40px rgba(0,0,0,.6)" }}>
+      <div style={{ fontSize: 17, fontWeight: 700, color: "#fff", marginBottom: 12 }}>Power</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {POWER.map((o, i) => (
+          <Focusable key={o.key} autoFocus={i === 0} onActivate={() => pick(o)}
+            style={{ height: 36, borderRadius: 4, display: "flex", alignItems: "center", padding: "0 14px", fontSize: 14, fontWeight: 600, color: "#fff", background: "#2a3340" }}>{o.label}</Focusable>
+        ))}
+      </div>
+    </div>
+  );
+}
+const openPower = () => showModal(<PowerMenu />);
 
 function Clock() {
   const [t, setT] = useState(() => new Date());
@@ -106,6 +134,7 @@ function Shell() {
           <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
             {active.length > 0 && <span onClick={() => navigate("/mercury/downloads")} style={{ cursor: "pointer", background: "rgba(26,159,255,.16)", color: "#8ccfff", padding: "2px 10px", borderRadius: 99, fontSize: 11, fontWeight: 600 }}>
               ↓ {active[0].name}{active.length > 1 ? ` +${active.length - 1}` : ""}</span>}
+            <Focusable onActivate={openPower} style={{ padding: "4px 10px", borderRadius: 4, fontWeight: 700, color: "#fff" }}>⏻ Power</Focusable>
             <Clock />
           </div>
         </div>

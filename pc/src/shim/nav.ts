@@ -103,6 +103,7 @@ function poll(t: number) {
     if (y < -0.6) down.add("up"); if (y > 0.6) down.add("down");
     if (x < -0.6) down.add("left"); if (x > 0.6) down.add("right");
   }
+  if (down.size) hideCursor();
   for (const b of down) {
     const since = held.get(b);
     if (since === undefined) { held.set(b, t); press(b); continue; }
@@ -113,3 +114,20 @@ function poll(t: number) {
   requestAnimationFrame(poll);
 }
 requestAnimationFrame(poll);
+
+// ---- hide the mouse cursor while a controller/keyboard is driving; real mouse movement brings it back ----
+const cursorStyle = document.createElement("style");
+cursorStyle.textContent = "html.no-cursor, html.no-cursor * { cursor: none !important; }";
+document.head.appendChild(cursorStyle);
+let lastMouse: [number, number] | null = null;
+const hideCursor = () => document.documentElement.classList.add("no-cursor");
+window.addEventListener("mousemove", (e) => {
+  // Layout shifts under a still cursor fire mousemove with the same coordinates; ignore those.
+  const moved = !lastMouse || Math.abs(e.screenX - lastMouse[0]) + Math.abs(e.screenY - lastMouse[1]) > 3;
+  lastMouse = [e.screenX, e.screenY];
+  if (moved) document.documentElement.classList.remove("no-cursor");
+});
+window.addEventListener("mousedown", () => document.documentElement.classList.remove("no-cursor"));
+window.addEventListener("keydown", hideCursor, true);
+window.addEventListener("gamepadconnected", hideCursor);
+hideCursor();

@@ -175,6 +175,25 @@ async fn open_url(Json(o): Json<OpenUrl>) -> R {
     Ok(Json(json!({ "ok": true })))
 }
 
+/// Windows: sleep, restart, shut down or sign out. Restart and shutdown wait 3 s so this reply still goes out.
+async fn power(Path(action): Path<String>) -> R {
+    #[cfg(windows)]
+    {
+        let mut c = match action.as_str() {
+            "sleep" => { let mut c = std::process::Command::new("rundll32.exe"); c.args(["powrprof.dll,SetSuspendState", "0,1,0"]); c }
+            "restart" => { let mut c = std::process::Command::new("shutdown.exe"); c.args(["/r", "/t", "3"]); c }
+            "shutdown" => { let mut c = std::process::Command::new("shutdown.exe"); c.args(["/s", "/t", "3"]); c }
+            "signout" => { let mut c = std::process::Command::new("shutdown.exe"); c.arg("/l"); c }
+            _ => return Err(anyhow::anyhow!("unknown power action").into()),
+        };
+        std::os::windows::process::CommandExt::creation_flags(&mut c, 0x0800_0000);
+        c.spawn().map_err(|e| anyhow::anyhow!("power {action} failed: {e}"))?;
+        Ok(Json(json!({ "ok": true })))
+    }
+    #[cfg(not(windows))]
+    { Err(anyhow::anyhow!("power controls are only available on Windows ({action})").into()) }
+}
+
 async fn delete_installer_files(State(a): State<App>, Path(id): Path<u32>) -> R { Ok(Json(json!({ "freed": a.m.delete_installer_files(id)? }))) }
 
 #[tokio::main]
@@ -202,6 +221,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/library/{appid}/installer-files", get(installer_files).delete(delete_installer_files))
         .route("/library/{appid}/play", post(play))
         .route("/open", post(open_url))
+        .route("/power/{action}", post(power))
         .with_state(App { m })
         // The Windows app's window (tauri.localhost) calls the engine from a different origin.
         .layer(tower_http::cors::CorsLayer::new()
