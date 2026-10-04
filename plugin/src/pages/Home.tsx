@@ -3,9 +3,9 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FaCog, FaDownload, FaSearch, FaThLarge } from "react-icons/fa";
 import { api, App, cdn } from "../api";
 import { usePoll } from "../hooks";
-import { Btn, C, FOCUS, FocusStyle, page, scrollIntoView } from "../ui";
+import { Btn, C, Cover, FOCUS, FocusStyle, page, scrollIntoView } from "../ui";
 
-type Item = { appid: number; name: string; tag?: string };
+type Item = { appid: number; name: string; tag?: string; cover?: string | null };
 
 /** Survives leaving the page (module state lives as long as the plugin), so B returns to the same cover. */
 let lastFocus: Item | undefined;
@@ -31,7 +31,8 @@ const Row = memo(function Row({ title, items, onFocus, focusId }: { title: strin
             onFocus={(e) => { onFocus(it, i, items); scrollIntoView(e); }}
             onActivate={() => Navigation.Navigate(`/mercury/game/${it.appid}`)}
             onOptionsButton={() => Navigation.Navigate("/mercury/search")} onOptionsActionDescription="Search"
-            style={{ flex: "none", width: 88, height: 132, borderRadius: 4, position: "relative", background: `${C.panel} url(${cdn(it.appid, "library_600x900.jpg")}) center/cover` }}>
+            style={{ flex: "none", width: 88, borderRadius: 4, position: "relative" }}>
+            <Cover app={it} width={88} radius={4} />
             {it.tag && <span style={{ position: "absolute", left: 4, bottom: 4, fontSize: 9, padding: "1px 4px", borderRadius: 3, background: "rgba(0,0,0,.75)" }}>{it.tag}</span>}
           </Focusable>
         ))}
@@ -51,7 +52,7 @@ export function Home() {
   // One row: the Steam wishlist. Installed games stay in it with a tag; the Library page lists them on their own.
   const wishlist: Item[] = useMemo(() => {
     const have = new Set((lib ?? []).map((e) => e.appid));
-    return (wish ?? []).map((a) => ({ appid: a.appid, name: a.name, tag: have.has(a.appid) ? "Installed" : undefined }));
+    return (wish ?? []).map((a) => ({ appid: a.appid, name: a.name, cover: a.cover, tag: have.has(a.appid) ? "Installed" : undefined }));
   }, [wish, lib]);
   const active = (jobs ?? []).filter((j) => !["done", "failed", "cancelled"].includes(j.state)).length;
 

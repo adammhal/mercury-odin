@@ -1,6 +1,6 @@
 import { Field, Focusable, ProgressBar } from "@decky/ui";
-import { CSSProperties, ReactNode } from "react";
-import { bytes, Job, jobPercent, STATE_LABEL } from "./api";
+import { CSSProperties, ReactNode, useEffect, useState } from "react";
+import { bytes, cdn, Job, jobPercent, STATE_LABEL } from "./api";
 
 export const C = { bg: "#0e141b", panel: "#1f242c", panel2: "#2a303a", text: "#dcdedf", dim: "#8b929a", accent: "#1a9fff", ok: "#a6ec6b", warn: "#f2c35b", bad: "#ff6b6b" };
 
@@ -58,5 +58,20 @@ export function Btn({ children, onClick, disabled, style, autoFocus }: { childre
         fontSize: 13, fontWeight: 600, color: "#fff", background: "rgba(255,255,255,.1)", opacity: disabled ? 0.45 : 1, flex: "none", ...style }}>
       {children}
     </Focusable>
+  );
+}
+
+/** A game's portrait cover, cropped to fill a fixed 2:3 box so every tile is the same size.
+ * Tries the store's real cover, then the plain CDN paths, then shows the name. */
+export function Cover({ app, width, radius = 6 }: { app: { appid: number; name: string; cover?: string | null }; width?: number; radius?: number }) {
+  const urls = [app.cover, cdn(app.appid, "library_600x900.jpg"), cdn(app.appid, "header.jpg")].filter(Boolean) as string[];
+  const [i, setI] = useState(0);
+  useEffect(() => setI(0), [app.appid, app.cover]);
+  return (
+    <div style={{ width: width ?? "100%", aspectRatio: "2 / 3", borderRadius: radius, overflow: "hidden", background: C.panel, position: "relative", flex: "none" }}>
+      {i < urls.length
+        ? <img src={urls[i]} onError={() => setI((n) => n + 1)} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+        : <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", padding: 8, textAlign: "center", fontSize: 12, color: C.dim }}>{app.name}</div>}
+    </div>
   );
 }

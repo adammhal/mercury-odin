@@ -1,7 +1,7 @@
 import { Focusable, Navigation, TextField } from "@decky/ui";
 import { useEffect, useState } from "react";
-import { api, App, cdn } from "../api";
-import { C, FOCUS, FocusStyle, page, scrollIntoView } from "../ui";
+import { api, App } from "../api";
+import { C, Cover, FOCUS, FocusStyle, page, scrollIntoView } from "../ui";
 
 /** Kept across visits so backing out of a result returns to the same search and result. */
 let saved: { q: string; res?: App[]; resQ?: string; focus?: number } = { q: "" };
@@ -27,11 +27,11 @@ export function Search() {
         <TextField label="Game name" value={q} focusOnMount={!saved.focus} onChange={(e) => setQ(e.target.value)} />
         {err && <div style={{ color: C.bad, marginTop: 10 }}>{err}</div>}
         {res && !res.length && <div style={{ color: C.dim, marginTop: 14 }}>No Steam games match.</div>}
-        <Focusable flow-children="grid" style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 10, marginTop: 12 }}>
+        <Focusable flow-children="grid" style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gap: 10, marginTop: 12 }}>
           {(res ?? []).map((a) => (
-            <Focusable key={a.appid} autoFocus={a.appid === saved.focus} focusClassName={FOCUS} noFocusRing style={{ borderRadius: 6 }}
+            <Focusable key={a.appid} autoFocus={a.appid === saved.focus} focusClassName={FOCUS} noFocusRing style={{ borderRadius: 6, minWidth: 0 }}
               onActivate={() => Navigation.Navigate(`/mercury/game/${a.appid}`)} onFocus={(e) => { saved.focus = a.appid; scrollIntoView(e); }}>
-              <div style={{ aspectRatio: "2/3", borderRadius: 6, background: `${C.panel} url(${cdn(a.appid, "library_600x900.jpg")}) center/cover` }} />
+              <Cover app={a} />
               <div style={{ fontSize: 11, marginTop: 4, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{a.name}</div>
             </Focusable>
           ))}

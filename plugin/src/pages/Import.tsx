@@ -1,9 +1,9 @@
 import { Focusable, Navigation, Spinner, TextField } from "@decky/ui";
 import { toaster } from "@decky/api";
 import { useEffect, useState } from "react";
-import { api, App, bytes, cdn, ImportCandidate, SteamShortcut } from "../api";
+import { api, App, bytes, ImportCandidate, SteamShortcut } from "../api";
 import { useOnce } from "../hooks";
-import { Btn, C, Chip, FOCUS, FocusStyle, page, scrollIntoView } from "../ui";
+import { Btn, C, Chip, Cover, FOCUS, FocusStyle, page, scrollIntoView } from "../ui";
 
 /** "Hollow.Knight.Silksong-RUNE (v1.2)" -> "Hollow Knight Silksong": a starting point for the Steam search. */
 function guessTitle(name: string) {
@@ -39,7 +39,7 @@ function Adopt({ sc, onDone }: { sc: SteamShortcut; onDone: () => void }) {
         {(res ?? []).slice(0, 10).map((a) => (
           <Focusable key={a.appid} focusClassName={FOCUS} noFocusRing onFocus={scrollIntoView} onActivate={() => setMatch(a)} onClick={() => setMatch(a)}
             style={{ flex: "none", width: 80, borderRadius: 4, outline: match?.appid === a.appid ? `2px solid ${C.ok}` : "none" }}>
-            <div style={{ height: 120, borderRadius: 4, background: `${C.panel} url(${cdn(a.appid, "library_600x900.jpg")}) center/cover` }} />
+            <Cover app={a} width={80} radius={4} />
             <div style={{ fontSize: 10, marginTop: 3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{a.name}</div>
           </Focusable>
         ))}
@@ -81,7 +81,7 @@ function Pick({ c, onDone }: { c: ImportCandidate; onDone: () => void }) {
         {(res ?? []).slice(0, 10).map((a) => (
           <Focusable key={a.appid} focusClassName={FOCUS} noFocusRing onFocus={scrollIntoView} onActivate={() => setMatch(a)} onClick={() => setMatch(a)}
             style={{ flex: "none", width: 80, borderRadius: 4, outline: match?.appid === a.appid ? `2px solid ${C.ok}` : "none" }}>
-            <div style={{ height: 120, borderRadius: 4, background: `${C.panel} url(${cdn(a.appid, "library_600x900.jpg")}) center/cover` }} />
+            <Cover app={a} width={80} radius={4} />
             <div style={{ fontSize: 10, marginTop: 3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{a.name}</div>
           </Focusable>
         ))}

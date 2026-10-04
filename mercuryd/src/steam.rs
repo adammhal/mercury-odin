@@ -19,6 +19,9 @@ pub struct App {
     pub release: String,
     #[serde(default)]
     pub developer: String,
+    /// Portrait cover URL. Newer games keep art under hashed paths, so the plain CDN path is often a 404.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cover: Option<String>,
 }
 
 static DETAILS: Mutex<Option<HashMap<u32, App>>> = Mutex::new(None);
@@ -54,6 +57,7 @@ pub async fn details(http: &reqwest::Client, appid: u32) -> Result<App> {
         genres: d["genres"].as_array().map(|g| g.iter().filter_map(|x| x["description"].as_str().map(String::from)).take(3).collect()).unwrap_or_default(),
         release: d["release_date"]["date"].as_str().unwrap_or_default().to_string(),
         developer: d["developers"][0].as_str().unwrap_or_default().to_string(),
+        cover: None,
     };
     with_cache(|m| {
         m.insert(appid, app.clone());
@@ -61,6 +65,32 @@ pub async fn details(http: &reqwest::Client, appid: u32) -> Result<App> {
         let _ = fs::write(cache_path(), serde_json::to_vec(m).unwrap_or_default());
     });
     Ok(app)
+}
+
+static COVERS: Mutex<Option<HashMap<u32, Option<String>>>> = Mutex::new(None);
+
+/// Fill `cover` with each game's real portrait (or header if it has none) from the store's asset list.
+pub async fn with_covers(http: &reqwest::Client, apps: &mut [App]) {
+    let missing: Vec<u32> = { let g = COVERS.lock().unwrap(); apps.iter().map(|a| a.appid).filter(|id| !g.as_ref().is_some_and(|m| m.contains_key(id))).collect() };
+    for chunk in missing.chunks(50) {
+        let ids: Vec<serde_json::Value> = chunk.iter().map(|id| serde_json::json!({ "appid": id })).collect();
+        let input = serde_json::json!({ "ids": ids, "context": { "language": "english", "country_code": "US" }, "data_request": { "include_assets": true } });
+        let Ok(r) = http.get("https://api.steampowered.com/IStoreBrowseService/GetItems/v1/").query(&[("input_json", input.to_string())]).send().await else { continue };
+        let Ok(v) = r.json::<serde_json::Value>().await else { continue };
+        let mut g = COVERS.lock().unwrap();
+        let m = g.get_or_insert_with(HashMap::new);
+        for it in v["response"]["store_items"].as_array().cloned().unwrap_or_default() {
+            let Some(id) = it["appid"].as_u64() else { continue };
+            let a = &it["assets"];
+            let url = a["asset_url_format"].as_str().and_then(|f| {
+                let file = a["library_capsule"].as_str().or(a["header"].as_str())?;
+                Some(format!("https://shared.akamai.steamstatic.com/store_item_assets/{}", f.replace("${FILENAME}", file)))
+            });
+            m.insert(id as u32, url);
+        }
+    }
+    let g = COVERS.lock().unwrap();
+    if let Some(m) = g.as_ref() { for a in apps.iter_mut() { a.cover = m.get(&a.appid).cloned().flatten(); } }
 }
 
 pub async fn wishlist(http: &reqwest::Client) -> Result<Vec<App>> {
@@ -75,6 +105,8 @@ pub async fn wishlist(http: &reqwest::Client) -> Result<Vec<App>> {
     use futures_util::StreamExt;
     let out: Vec<App> = futures_util::stream::iter(items.into_iter().map(|(_, appid)| async move { details(http, appid).await.ok() }))
         .buffered(6).filter_map(|a| async move { a }).collect().await;
+    let mut out = out;
+    with_covers(http, &mut out).await;
     Ok(out)
 }
 
@@ -82,10 +114,12 @@ pub async fn search(http: &reqwest::Client, q: &str) -> Result<Vec<App>> {
     let v: serde_json::Value = http
         .get(format!("https://store.steampowered.com/api/storesearch/?term={}&l=english&cc=US", urlencoding::encode(q)))
         .send().await?.json().await?;
-    Ok(v["items"].as_array().cloned().unwrap_or_default().iter()
+    let mut out: Vec<App> = v["items"].as_array().cloned().unwrap_or_default().iter()
         .filter(|i| i["type"].as_str() == Some("app"))
-        .filter_map(|i| Some(App { appid: i["id"].as_u64()? as u32, name: i["name"].as_str()?.to_string(), description: String::new(), genres: vec![], release: String::new(), developer: String::new() }))
-        .collect())
+        .filter_map(|i| Some(App { appid: i["id"].as_u64()? as u32, name: i["name"].as_str()?.to_string(), description: String::new(), genres: vec![], release: String::new(), developer: String::new(), cover: None }))
+        .collect();
+    with_covers(http, &mut out).await;
+    Ok(out)
 }
 
 #[derive(Serialize)]
