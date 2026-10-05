@@ -175,19 +175,23 @@ async fn open_url(Json(o): Json<OpenUrl>) -> R {
     Ok(Json(json!({ "ok": true })))
 }
 
-/// Windows: sleep, restart, shut down or sign out. Restart and shutdown wait 3 s so this reply still goes out.
+/// Windows: sleep, restart, shut down or sign out. The command runs 1.5 s after this reply goes out, with no
+/// shutdown.exe countdown (a non-zero /t makes Windows pop up a "you are about to be signed out" warning).
 async fn power(Path(action): Path<String>) -> R {
     #[cfg(windows)]
     {
         let mut c = match action.as_str() {
             "sleep" => { let mut c = std::process::Command::new("rundll32.exe"); c.args(["powrprof.dll,SetSuspendState", "0,1,0"]); c }
-            "restart" => { let mut c = std::process::Command::new("shutdown.exe"); c.args(["/r", "/t", "3"]); c }
-            "shutdown" => { let mut c = std::process::Command::new("shutdown.exe"); c.args(["/s", "/t", "3"]); c }
+            "restart" => { let mut c = std::process::Command::new("shutdown.exe"); c.args(["/r", "/t", "0"]); c }
+            "shutdown" => { let mut c = std::process::Command::new("shutdown.exe"); c.args(["/s", "/t", "0"]); c }
             "signout" => { let mut c = std::process::Command::new("shutdown.exe"); c.arg("/l"); c }
             _ => return Err(anyhow::anyhow!("unknown power action").into()),
         };
         std::os::windows::process::CommandExt::creation_flags(&mut c, 0x0800_0000);
-        c.spawn().map_err(|e| anyhow::anyhow!("power {action} failed: {e}"))?;
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(1500));
+            if let Err(e) = c.spawn() { tracing::warn!("power {action} failed: {e}"); }
+        });
         Ok(Json(json!({ "ok": true })))
     }
     #[cfg(not(windows))]
