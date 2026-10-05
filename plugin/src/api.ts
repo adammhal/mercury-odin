@@ -4,7 +4,7 @@ const BASE = "http://127.0.0.1:47800";
 
 export type App = { appid: number; name: string; description: string; genres: string[]; release: string; developer: string; cover?: string | null };
 export type Source = { name: string; provider: string; size: string; size_bytes: number; magnet?: string | null; url?: string | null; version?: string | null; urls?: string[]; supported?: boolean; repack?: boolean };
-export type JobState = "queued" | "resolving" | "caching" | "downloading" | "paused" | "extracting" | "needs_setup" | "installing" | "ready" | "done" | "failed" | "cancelled";
+export type JobState = "queued" | "resolving" | "caching" | "downloading" | "paused" | "extracting" | "needs_setup" | "installing" | "ready" | "review" | "done" | "failed" | "cancelled";
 export type Job = {
   id: number; appid: number; name: string; source: Source; state: JobState; error?: string | null;
   dir?: string | null; setup_exe?: string | null; exe?: string | null; candidates: string[]; shortcut_id?: number | null;
@@ -20,7 +20,8 @@ export type Entry = { appid: number; name: string; dir: string; exe: string; sho
 export type Location = { label: string; path: string; free: number; total: number; default: boolean };
 export type SteamShortcut = { appid: number; name: string; exe: string; start_dir: string; launch_options: string };
 export type Status = { version: string; rd_key_set: boolean; unrar: boolean; installer_launch_options?: string | null; storage: { total: number; free: number; mercury: number } };
-export type Config = { browser_shortcut_id?: number | null; sgdb_key?: string; sgdb_key_set?: boolean; rd_key: string; rd_key_set: boolean; games_dir: string; downloads_dir: string; server_url: string; enable_steamrip: boolean; proton_tool: string; launch_options: string };
+export type Config = { browser_shortcut_id?: number | null; sgdb_key?: string; sgdb_key_set?: boolean; review_art?: boolean; launcher?: string; rd_key: string; rd_key_set: boolean; games_dir: string; downloads_dir: string; server_url: string; enable_steamrip: boolean; proton_tool: string; launch_options: string };
+export type SgdbOpt = { url: string; thumb: string; score: number; width: number; height: number; author: string };
 
 /** Rejects if `p` has not settled after `ms`. Nothing Mercury waits on may hang forever. */
 export function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
@@ -54,6 +55,8 @@ export const api = {
   search: (q: string) => req<App[]>(`/steam/search?q=${encodeURIComponent(q)}`),
   app: (id: number) => req<App>(`/steam/app/${id}`),
   art: (id: number) => req<{ assets: [number, string, string][]; icon?: string | null }>(`/steam/art/${id}`),
+  sgdb: (appid: number, slot: number) => req<{ options: SgdbOpt[] }>(`/sgdb/${appid}/${slot}`),
+  resolveArt: (appid: number, choices: Record<string, string>) => req<{ assets: [number, string, string][] }>("/art/resolve", "POST", { appid, choices }),
   sources: (name: string, refresh = false) =>
     req<{ sources: Source[]; installed_estimate: number[]; errors: string[] }>(`/sources?name=${encodeURIComponent(name)}${refresh ? "&refresh=true" : ""}`),
   cached: (magnets: string[]) => req<Record<string, Availability>>("/sources/cached", "POST", { magnets }),
@@ -95,12 +98,12 @@ export function bytes(n: number): string {
 export const STATE_LABEL: Record<JobState, string> = {
   queued: "Waiting", resolving: "Contacting Real-Debrid", caching: "Caching on Real-Debrid", downloading: "Downloading",
   paused: "Paused", extracting: "Extracting", needs_setup: "Installer ready", installing: "Installer running",
-  ready: "Adding to Steam", done: "Ready to play", failed: "Failed", cancelled: "Cancelled",
+  ready: "Adding to Steam", review: "Waiting for your review", done: "Ready to play", failed: "Failed", cancelled: "Cancelled",
 };
 
 /** 0-100 progress for whichever step a job is in. */
 export function jobPercent(j: Job): number {
   if (j.state === "caching") return j.cache_progress;
   if (j.total > 0) return Math.min(100, (j.done / j.total) * 100);
-  return ["done", "ready"].includes(j.state) ? 100 : 0;
+  return ["done", "ready", "review"].includes(j.state) ? 100 : 0;
 }

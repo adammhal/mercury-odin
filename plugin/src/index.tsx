@@ -14,14 +14,24 @@ import { Import } from "./pages/Import";
 import { Search } from "./pages/Search";
 import { Settings } from "./pages/Settings";
 import { addToSteam, onAppExit, shortcutExists } from "./steam";
+import { Review } from "./pages/Review";
+import { setReviewHandler } from "./review";
 import { Navigation } from "@decky/ui";
 import { checkBrowserDownload } from "./browser";
 import { stopStoreButton, tickStoreButton } from "./storeButton";
 import { patchLibraryPage } from "./libraryBadge";
 
+// On the Odin only the plugin can reach Steam's client, so a confirmed review adds the game here,
+// with the chosen title and Steam's art plus the user's SteamGridDB picks.
+setReviewHandler(async (job, r) => {
+  const { assets } = await api.resolveArt(job.appid, r.art);
+  await addToSteam(job, job.exe ?? "", { name: r.name, assets });
+});
+
 const ROUTES: [string, FC][] = [
   ["/mercury", Home], ["/mercury/game/:appid", Game], ["/mercury/downloads", Downloads],
   ["/mercury/library", Library], ["/mercury/import", Import], ["/mercury/search", Search], ["/mercury/settings", Settings],
+  ["/mercury/review/:id", Review],
 ];
 
 /** Background work that must happen even when no Mercury page is open. */
@@ -49,6 +59,12 @@ function startWatcher() {
       }
       if (prev && prev !== j.state) {
         if (j.state === "needs_setup") toaster.toast({ title: "Mercury", body: `${j.name} downloaded. Run its installer from Downloads.` });
+        if (j.state === "review") {
+          // Open the Review screen if Mercury is on screen; otherwise (say, mid-game) just tell the user.
+          const path = (window as any).SteamUIStore?.WindowStore?.GamepadUIMainWindowInstance?.m_history?.location?.pathname ?? "";
+          if (path.startsWith("/mercury")) Navigation.Navigate(`/mercury/review/${j.id}`);
+          else toaster.toast({ title: "Mercury", body: `${j.name} is installed. Review its title and art to add it to Steam.`, onClick: () => Navigation.Navigate(`/mercury/review/${j.id}`) } as any);
+        }
         if (j.state === "failed") toaster.toast({ title: "Mercury", body: `${j.name} failed: ${j.error ?? "unknown error"}` });
       }
     }

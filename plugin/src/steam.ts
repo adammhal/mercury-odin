@@ -11,8 +11,10 @@ export const gameId = (appid: number) => ((BigInt(appid >>> 0) << 32n) | 0x02000
 
 const dirOf = (p: string) => p.slice(0, p.lastIndexOf("/") + 1);
 
-async function applyArt(shortcut: number, steamAppid: number) {
-  const { assets, icon } = await api.art(steamAppid);
+/** `chosen`: art from the Review screen (Steam's store art with the user's SteamGridDB picks swapped in). */
+async function applyArt(shortcut: number, steamAppid: number, chosen?: [number, string, string][]) {
+  const { assets: store, icon } = await api.art(steamAppid);
+  const assets = chosen ?? store;
   for (const [type, ext, data] of assets) {
     await step(`art ${type}`, SteamClient.Apps.SetCustomArtworkForApp(shortcut, data, ext, type));
   }
@@ -29,7 +31,8 @@ async function configure(shortcut: number, name: string, exe: string) {
 }
 
 /** Create the Steam shortcut for a finished job, or finish one a previous attempt (or the installer) made. */
-export async function addToSteam(job: Job, exe = job.exe ?? ""): Promise<number> {
+export async function addToSteam(job: Job, exe = job.exe ?? "", opts: { name?: string; assets?: [number, string, string][] } = {}): Promise<number> {
+  const name = opts.name?.trim() || job.name;
   if (!exe) throw new Error("No game .exe to add");
   let id = job.shortcut_id ?? 0;
   log(job.name, id ? `reusing shortcut ${id}` : "creating shortcut", exe);
@@ -38,13 +41,13 @@ export async function addToSteam(job: Job, exe = job.exe ?? ""): Promise<number>
     await step("start dir", SteamClient.Apps.SetShortcutStartDir(id, dirOf(exe)));
   } else {
     // AddShortcut takes plain paths and quotes the exe itself (spike S2).
-    id = Number(await step("AddShortcut", SteamClient.Apps.AddShortcut(job.name, exe, dirOf(exe), "")));
+    id = Number(await step("AddShortcut", SteamClient.Apps.AddShortcut(name, exe, dirOf(exe), "")));
     if (!id) throw new Error("Steam did not create the shortcut");
     await api.act(job.id, "shortcut-created", { shortcut_id: id });
   }
-  await configure(id, job.name, exe);
-  await applyArt(id, job.appid);
-  await api.act(job.id, "steam-added", { shortcut_id: id, exe });
+  await configure(id, name, exe);
+  await applyArt(id, job.appid, opts.assets);
+  await api.act(job.id, "steam-added", { shortcut_id: id, exe, name });
   log(job.name, "done, shortcut", id);
   return id;
 }

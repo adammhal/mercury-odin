@@ -105,8 +105,8 @@ export function Home() {
         </div>}
       </div>
 
-      <div style={{ position: "relative", flex: "none", height: 176, marginBottom: 40, overflow: "hidden" }}>
-        {!wish && !lib && <div style={{ marginLeft: 32, color: C.dim, fontSize: 12 }}>Loading your Steam wishlist…</div>}
+      <div style={{ position: "relative", flex: "none", height: 176, marginBottom: 40, overflowY: "auto", scrollbarWidth: "none" }}>
+        {!wish && <div style={{ marginLeft: 32, color: C.dim, fontSize: 12 }}>Loading your Steam wishlist…</div>}
         <Row title="Your Steam wishlist" items={wishlist} onFocus={onFocus} focusId={focusId} />
       </div>
     </div>

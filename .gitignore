@@ -4,3 +4,5 @@ dist/
 out/
 *.log
 .pnpm-store/
+pc/src-tauri/target/
+pc/src-tauri/gen/

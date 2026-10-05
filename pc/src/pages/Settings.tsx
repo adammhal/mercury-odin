@@ -1,24 +1,15 @@
-import { ButtonItem, Dropdown, Field, Focusable, PanelSection, TextField, ToggleField } from "@decky/ui";
+import { ButtonItem, Field, Focusable, PanelSection, TextField, ToggleField } from "@decky/ui";
 import { toaster } from "@decky/api";
 import { useEffect, useState } from "react";
-import { api, bytes, Config, Location } from "../api";
-import { usePoll } from "../hooks";
-import { Btn, C, FocusStyle, page } from "../ui";
-
-// Internal tool names as reported by SteamClient.Apps.GetAvailableCompatTools on the Odin (2026-10-01).
-// A wrong name makes Steam run the .exe natively with no error, so never guess these.
-const PROTONS = [
-  { data: "proton-experimental-arm64", label: "Proton Experimental (ARM64)" },
-  { data: "proton_11-arm64", label: "Proton 11.0 (ARM64)" },
-  { data: "proton-cachyos-11.0-arm64", label: "Proton 11.0 CachyOS (ARM64)" },
-];
+import { api, bytes, Config } from "@shared/api";
+import { usePoll } from "@shared/hooks";
+import { Btn, C, FocusStyle, page } from "@shared/ui";
 
 export function Settings() {
   const [cfg, setCfg] = useState<Config>();
   const [key, setKey] = useState("");
-  const [sgdbKey, setSgdbKey] = useState("");
-  const [status, , reloadStatus] = usePoll(api.status, 0);
-  const [locs, , reloadLocs] = usePoll(api.locations, 0);
+  const [sgdb, setSgdb] = useState("");
+  const [status, , reloadStatus] = usePoll(api.status as () => Promise<any>, 0);
   useEffect(() => { api.config().then(setCfg, () => {}); }, []);
 
   const save = async (patch: Partial<Config>) => {
@@ -44,30 +35,23 @@ export function Settings() {
             <Btn style={{ width: 180 }} disabled={!cfg.rd_key_set} onClick={check}>Test key</Btn>
           </Focusable>
         </PanelSection>
-        <PanelSection title="SteamGridDB (optional)">
-          <Field label="API key" description={cfg.sgdb_key_set ? "A key is saved. Mercury uses SteamGridDB for art Steam lacks, and for game icons." : "Not set. Get one at steamgriddb.com, under Preferences then API. Without it, Mercury uses Steam's art only."} childrenLayout="below">
-            <TextField bIsPassword value={sgdbKey} onChange={(e) => setSgdbKey(e.target.value)} />
+        <PanelSection title="Artwork">
+          <Field label="SteamGridDB key" description={cfg.sgdb_key_set ? "A key is saved. Type a new one to replace it." : "Not set. Create one at steamgriddb.com under Preferences, then API."} childrenLayout="below">
+            <TextField bIsPassword value={sgdb} onChange={(e) => setSgdb(e.target.value)} />
           </Field>
           <Focusable flow-children="horizontal" style={{ display: "flex", gap: 10, margin: "8px 0 4px" }}>
-            <Btn style={{ width: 180 }} disabled={!sgdbKey} onClick={async () => { await save({ sgdb_key: sgdbKey }); setSgdbKey(""); }}>Save key</Btn>
+            <Btn style={{ width: 180 }} disabled={!sgdb} onClick={async () => { await save({ sgdb_key: sgdb }); setSgdb(""); }}>Save key</Btn>
           </Focusable>
-          <ToggleField label="Review before adding to Steam" description="After a game installs, check its title and choose SteamGridDB art before it goes to Steam. Off: it is added right away with Steam's art."
-            checked={cfg.review_art ?? true} onChange={(v) => save({ review_art: v })} />
+          <ToggleField label="Review before adding to Steam" description="After a game installs, confirm its title and artwork before it goes to Steam" checked={cfg.review_art !== false} onChange={(v) => save({ review_art: v })} />
         </PanelSection>
         <PanelSection title="Games">
-          <Field label="Proton for new games" childrenLayout="below">
-            <Dropdown rgOptions={PROTONS} selectedOption={cfg.proton_tool} onChange={(o) => save({ proton_tool: o.data })} />
-          </Field>
-          <Field label="Install new games on" description={`${cfg.games_dir}. Mount a Windows-formatted microSD card from Library, Import first.`} childrenLayout="below">
-            <Dropdown rgOptions={(locs ?? []).map((l: Location) => ({ data: l.path, label: `${l.label} · ${bytes(l.free)} free` }))}
-              selectedOption={cfg.games_dir} onChange={async (o) => { await save({ games_dir: o.data }); reloadLocs(); }} />
-          </Field>
-          <Field label="Launch options for new games" description={cfg.launch_options || "None"} />
+          <Field label="Install folder" description={cfg.games_dir} />
+          <Field label="Steam" description={!status?.steam?.found ? "Steam not found. Games still install, but are not added to a launcher." : status.launcher === "warmup" ? "Installed games go to warmUP." : status.steam.flag ? "Found. Installed games are added to your Steam library with their art." : "Found. Mercury turns on its Steam connection the first time it adds a game."} />
           <ToggleField label="Search SteamRIP" description="Pre-installed games from the SteamRIP feed" checked={cfg.enable_steamrip} onChange={(v) => save({ enable_steamrip: v })} />
         </PanelSection>
         <PanelSection title="Status">
           <Field label="Storage" description={status ? `${bytes(status.storage.free)} free of ${bytes(status.storage.total)} · Mercury games ${bytes(status.storage.mercury)}` : "…"} />
-          <Field label="RAR support" description={status?.unrar ? "unrar installed" : "unrar missing: RAR archives cannot be extracted"} />
+          <Field label="Archives" description={status?.unrar ? "7-Zip found (zip, 7z and rar)" : "7-Zip missing: install it from 7-zip.org"} />
           <Field label="Engine" description={status ? `mercuryd ${status.version}` : "Not responding"} />
           <ButtonItem layout="below" onClick={reloadStatus}>Refresh</ButtonItem>
         </PanelSection>

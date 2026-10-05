@@ -28,17 +28,18 @@ fn walk(dir: &Path, depth: usize, out: &mut Vec<(PathBuf, usize)>) {
 }
 
 /// A repack (FitGirl, DODI, ...) ships `setup.exe` at the top with data files, not a playable game.
-/// GOG offline installers are `setup_<game>_<version>.exe`, often beside `setup_..-1.bin` parts.
+/// GOG offline installers (Appnetica's most common release) are `setup_<game>_<version>.exe` with `-N.bin` parts.
 pub fn find_setup(dir: &Path) -> Option<PathBuf> {
-    let files: Vec<PathBuf> = std::fs::read_dir(dir).ok()?.flatten().map(|e| e.path()).filter(|p| p.is_file()).collect();
-    let name = |p: &PathBuf| p.file_name().and_then(|n| n.to_str()).unwrap_or("").to_lowercase();
-    if let Some(p) = files.iter().find(|p| name(p) == "setup.exe") { return Some(p.clone()); }
-    let gog: Vec<&PathBuf> = files.iter().filter(|p| { let n = name(p); n.starts_with("setup_") && n.ends_with(".exe") }).collect();
-    // With several, take the one whose .bin parts are present.
-    gog.iter().find(|p| {
-        let stem = name(p).trim_end_matches(".exe").to_string();
-        files.iter().any(|f| { let n = name(f); n.starts_with(&stem) && n.ends_with(".bin") })
-    }).or(gog.first()).map(|p| (*p).clone())
+    let re = Regex::new(r"(?i)^setup(_[^\\/]+)?\.exe$").unwrap();
+    let mut found: Vec<PathBuf> = std::fs::read_dir(dir).ok()?.flatten().map(|e| e.path())
+        .filter(|p| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| re.is_match(n))).collect();
+    // A plain setup.exe wins; then installers that are not add-ons; then the shortest name.
+    let extra = Regex::new(r"(?i)_(dlc|soundtrack|ost|artbook|bonus|goodies|manual|wallpapers?)(_|\.|$)").unwrap();
+    found.sort_by_key(|p| {
+        let n = p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        (!n.eq_ignore_ascii_case("setup.exe"), extra.is_match(&n), n.len())
+    });
+    found.into_iter().next()
 }
 
 fn words(s: &str) -> Vec<String> {
@@ -154,6 +155,13 @@ mod tests {
         assert!(c.iter().all(|x| !x.path.to_string_lossy().contains("vcredist")));
         assert!(is_wine_dir(Path::new("/x/pfx/drive_c/Program Files (x86)/Steam/steam.exe")));
         assert!(!is_wine_dir(Path::new("/x/pfx/drive_c/Games/Skate Story/SkateStory.exe")));
+        let g = d.join("gog"); std::fs::create_dir_all(&g).unwrap();
+        for f in ["setup_pacific_drive_1.2.3_(64bit).exe", "setup_pacific_drive_dlc_1.2.3.exe", "setup_pacific_drive_1.2.3_(64bit)-1.bin"] { std::fs::write(g.join(f), b"MZ").unwrap(); }
+        assert_eq!(find_setup(&g).unwrap().file_name().unwrap(), "setup_pacific_drive_1.2.3_(64bit).exe");
+        for f in std::fs::read_dir(&g).unwrap().flatten() { std::fs::remove_file(f.path()).unwrap(); }
+        for f in ["setup_ghostrunner_2_1.0.exe", "setup_ghostrunner_2_soundtrack_1.0.exe"] { std::fs::write(g.join(f), b"MZ").unwrap(); }
+        assert_eq!(find_setup(&g).unwrap().file_name().unwrap(), "setup_ghostrunner_2_1.0.exe");
+        std::fs::remove_dir_all(&g).unwrap();
         std::fs::write(d.join("setup.exe"), b"MZ").unwrap();
         assert!(find_setup(&d).is_some());
         let g = d.join("gog");

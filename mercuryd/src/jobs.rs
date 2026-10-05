@@ -10,7 +10,7 @@ use std::{collections::HashMap, path::PathBuf, sync::{Arc, Mutex, atomic::{Atomi
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum State { Queued, Resolving, Caching, Downloading, Paused, Extracting, NeedsSetup, Installing, Ready, Done, Failed, Cancelled }
+pub enum State { Queued, Resolving, Caching, Downloading, Paused, Extracting, NeedsSetup, Installing, Ready, Review, Done, Failed, Cancelled }
 
 impl State {
     pub fn active(self) -> bool { !matches!(self, State::Done | State::Failed | State::Cancelled) }
@@ -253,7 +253,10 @@ impl Manager {
             for c in install::find_game_exe(&base, &job.name) {
                 if c.score <= -500 || install::is_wine_dir(&c.path) || install::is_wine_stub(&c.path) { continue; }
                 // ctime is set when the file is created and cannot be backdated by an installer (unlike mtime).
+                #[cfg(unix)]
                 let created = std::fs::metadata(&c.path).map(|m| std::os::unix::fs::MetadataExt::ctime(&m) as u64).unwrap_or(0);
+                #[cfg(not(unix))]
+                let created = u64::MAX;
                 if job.setup_started.is_some_and(|t| created + 5 < t) { continue; }
                 cands.push(c.path);
             }
@@ -264,8 +267,16 @@ impl Manager {
             self.update(id, |j| { j.state = State::NeedsSetup; j.error = Some(msg.clone()) });
             bail!("{msg}");
         }
-        self.update(id, |j| { j.exe = Some(cands[0].clone()); j.candidates = cands.into_iter().take(8).collect(); j.state = State::Ready; j.error = None });
+        // An update keeps its Steam shortcut, so there is nothing to review.
+        let st = if job.update_of.is_some() { State::Ready } else { self.installed_state() };
+        self.update(id, |j| { j.exe = Some(cands[0].clone()); j.candidates = cands.into_iter().take(8).collect(); j.state = st; j.error = None });
         Ok(self.get(id).unwrap())
+    }
+
+    /// State for a newly installed game: the Odin plugin adds `ready` jobs to Steam on its own; with `review_art` it
+    /// waits in `review` until the user confirms the title and artwork. (Windows decides in `add_to_library`.)
+    fn installed_state(&self) -> State {
+        if cfg!(unix) && self.cfg.lock().unwrap().review_art { State::Review } else { State::Ready }
     }
 
     /// Add a game folder that is already installed somewhere else.
@@ -277,12 +288,14 @@ impl Manager {
 
     /// Steam made the shortcut; the plugin is still configuring it. A retry reuses it instead of adding a duplicate.
     pub fn shortcut_created(&self, id: u64, shortcut_id: u32) {
-        self.update(id, |j| if j.state == State::Ready { j.shortcut_id = Some(shortcut_id) });
+        self.update(id, |j| if matches!(j.state, State::Ready | State::Review) { j.shortcut_id = Some(shortcut_id) });
     }
 
     /// The plugin created (or repointed) the Steam shortcut. The game is installed.
-    pub fn steam_added(&self, id: u64, shortcut_id: u32, exe: Option<PathBuf>) -> Result<()> {
-        let job = self.get(id).ok_or_else(|| anyhow!("no such job"))?;
+    /// `name`: the title the user chose on the Review screen.
+    pub fn steam_added(&self, id: u64, shortcut_id: u32, exe: Option<PathBuf>, name: Option<String>) -> Result<()> {
+        let mut job = self.get(id).ok_or_else(|| anyhow!("no such job"))?;
+        if let Some(n) = name.filter(|n| !n.trim().is_empty()) { job.name = n.trim().to_string(); }
         let exe = exe.or(job.exe.clone()).ok_or_else(|| anyhow!("no exe"))?;
         let repack = job.setup_exe.is_some();
         let old = self.saved.lock().unwrap().library.iter().find(|e| e.appid == job.appid).cloned();
@@ -306,6 +319,112 @@ impl Manager {
         // A repack's installer files stay until the user deletes them from the game page.
         let _ = repack;
         Ok(())
+    }
+
+    /// Windows: run a repack's setup.exe (elevated, it asks for admin anyway) into games_dir/<name>,
+    /// wait for it to close, then find the game and add it to warmUP.
+    #[cfg(windows)]
+    pub async fn run_setup(self: Arc<Self>, id: u64) -> Result<()> {
+        let job = self.get(id).ok_or_else(|| anyhow!("no such job"))?;
+        if job.state != State::NeedsSetup { bail!("{} is not waiting for its installer", job.name); }
+        let setup = job.setup_exe.clone().ok_or_else(|| anyhow!("no installer"))?;
+        let target = self.cfg.lock().unwrap().games_dir.join(slug(&job.name));
+        self.update(id, |j| { j.state = State::Installing; j.setup_started = Some(now()); j.error = None });
+        let me = self.clone();
+        tokio::spawn(async move {
+            let res: Result<()> = async {
+                // Start-Process -Verb RunAs shows the UAC prompt; -Wait returns when the installer closes.
+                let q = |p: &std::path::Path| p.display().to_string().replace('\'', "''");
+                let script = format!("Start-Process -FilePath '{}' -WorkingDirectory '{}' -ArgumentList '/DIR=\"{}\"' -Verb RunAs -Wait",
+                    q(&setup), q(setup.parent().unwrap()), q(&target));
+                let mut c = tokio::process::Command::new("powershell");
+                c.args(["-NoProfile", "-NonInteractive", "-Command", &script]);
+                extract::quiet(&mut c);
+                let out = c.output().await?;
+                if !out.status.success() {
+                    let e = String::from_utf8_lossy(&out.stderr);
+                    bail!("the installer did not run{}", if e.contains("canceled by the user") { " (the admin prompt was declined)" } else { "" });
+                }
+                let cands = install::find_game_exe(&target, &job.name);
+                let exe = cands.first().filter(|c| c.score > -500).map(|c| c.path.clone())
+                    .ok_or_else(|| anyhow!("The installer closed without installing the game. Run it again."))?;
+                me.update(id, |j| { j.exe = Some(exe); j.candidates = cands.into_iter().take(8).map(|c| c.path).collect(); j.state = State::Ready });
+                me.add_to_library(id).await
+            }.await;
+            if let Err(e) = res {
+                tracing::warn!("job {id} installer: {e:#}");
+                me.update(id, |j| { j.state = State::NeedsSetup; j.error = Some(format!("{e:#}")) });
+            }
+        });
+        Ok(())
+    }
+
+    /// Windows: record the game in Mercury's library and add it to warmUP.
+    #[cfg(windows)]
+    async fn add_to_library(&self, id: u64) -> Result<()> {
+        let (launcher, review) = { let c = self.cfg.lock().unwrap(); (c.launcher.clone(), c.review_art) };
+        if launcher != "warmup" && review {
+            // Wait for the user to confirm the title and artwork (the Review screen), then `confirm_review` finishes the job.
+            self.update(id, |j| { j.state = State::Review; j.error = None });
+            return Ok(());
+        }
+        self.finalize_add(id, None, Default::default()).await
+    }
+
+    /// The user confirmed the Review screen: add the game to Steam with the chosen title and artwork.
+    #[cfg(windows)]
+    pub async fn confirm_review(self: Arc<Self>, id: u64, name: Option<String>, art: HashMap<String, String>) -> Result<()> {
+        if self.get(id).ok_or_else(|| anyhow!("no such job"))?.state != State::Review { bail!("this game is not waiting for review"); }
+        self.finalize_add(id, name, art).await
+    }
+
+    #[cfg(windows)]
+    async fn finalize_add(&self, id: u64, name_override: Option<String>, choices: HashMap<String, String>) -> Result<()> {
+        let job = self.get(id).ok_or_else(|| anyhow!("no such job"))?;
+        let exe = job.exe.clone().ok_or_else(|| anyhow!("no exe"))?;
+        let repack = job.setup_exe.is_some();
+        let dir = if repack { self.cfg.lock().unwrap().games_dir.join(slug(&job.name)) } else { job.dir.clone().unwrap_or_default() };
+        let app = crate::steam::details(&self.http, job.appid).await.ok();
+        let name: String = name_override.map(|n| n.trim().to_string()).filter(|n| !n.is_empty())
+            .unwrap_or_else(|| job.name.chars().filter(|c| !matches!(c, '\u{2122}' | '\u{00ae}' | '\u{00a9}')).collect::<String>().trim().to_string());
+        let launcher = self.cfg.lock().unwrap().launcher.clone();
+        let mut shortcut_id = 0u32;
+        let added: Result<()> = if launcher == "warmup" {
+            let r = crate::warmup::add(&exe, &dir, &name, app.as_ref(), job.appid);
+            if let Err(e) = &r { tracing::warn!("warmUP: could not add {name}: {e:#}"); }
+            r.map(|_| ()).map_err(|e| anyhow!("Installed, but not added to warmUP: {e:#}"))
+        } else {
+            let r: Result<u32> = async {
+                // A reinstall replaces the old shortcut instead of leaving two.
+                let old = self.saved.lock().unwrap().library.iter().find(|e| e.appid == job.appid).map(|e| e.shortcut_id).unwrap_or(0);
+                let _ = crate::steamwin::remove_shortcut(&self.http, old).await;
+                let art = crate::sgdb::resolve(&self.http, job.appid, &choices).await?;
+                crate::steamwin::add_shortcut(&self.http, &name, &exe, &art).await
+            }.await;
+            match r {
+                Ok(id) => { shortcut_id = id; Ok(()) }
+                Err(e) => { tracing::warn!("Steam: could not add {name}: {e:#}"); Err(anyhow!("Installed, but not added to Steam: {e:#}")) }
+            }
+        };
+        let entry = Entry { appid: job.appid, name: name.clone(), size: storage::dir_size(&dir), dir, exe: exe.clone(), shortcut_id,
+            provider: job.source.provider.clone(), version: job.source.version.clone(), installed: now(),
+            installer_dir: if repack { job.dir.clone() } else { None } };
+        let mut s = self.saved.lock().unwrap();
+        s.library.retain(|e| e.appid != job.appid);
+        s.library.push(entry);
+        if let Some(j) = s.jobs.iter_mut().find(|j| j.id == id) {
+            j.state = State::Done;
+            j.shortcut_id = if shortcut_id != 0 { Some(shortcut_id) } else { None };
+            j.error = added.err().map(|e| format!("{e:#}"));
+        }
+        self.save(&s);
+        Ok(())
+    }
+
+    pub fn set_steam_self(&self, id: u32) {
+        let mut c = self.cfg.lock().unwrap();
+        c.steam_self_id = Some(id);
+        let _ = c.save();
     }
 
     /// Installer files of a repack that is already installed, and their size.
@@ -456,6 +575,12 @@ impl Manager {
         let repack_dirs: Vec<PathBuf> = e.installer_dir.iter().cloned().collect();
         s.jobs.retain(|j| j.appid != appid || j.state.active());
         self.save(&s);
+        #[cfg(windows)]
+        {
+            if let Err(err) = crate::warmup::remove(&e.exe) { tracing::warn!("warmUP: could not remove {}: {err:#}", e.name); }
+            let (http, sid, name) = (self.http.clone(), e.shortcut_id, e.name.clone());
+            tokio::spawn(async move { if let Err(err) = crate::steamwin::remove_shortcut(&http, sid).await { tracing::warn!("Steam: could not remove {name}: {err:#}"); } });
+        }
         let (dir, sid) = (e.dir.clone(), e.shortcut_id);
         std::thread::spawn(move || {
             let _ = std::fs::remove_dir_all(&dir);
@@ -537,7 +662,8 @@ impl Manager {
             }
             let cands = install::find_game_exe(&dir, &job.name);
             let exe = cands.first().filter(|c| c.score > -500).map(|c| c.path.clone()).ok_or_else(|| anyhow!("No game .exe found in {}", dir.display()))?;
-            self.update(id, |j| { j.dir = Some(dir.clone()); j.exe = Some(exe); j.candidates = cands.into_iter().take(8).map(|c| c.path).collect(); j.state = State::Ready });
+            let st = self.installed_state();
+            self.update(id, |j| { j.dir = Some(dir.clone()); j.exe = Some(exe); j.candidates = cands.into_iter().take(8).map(|c| c.path).collect(); j.state = st });
             return Ok(());
         }
         if !job.local_files.is_empty() {
@@ -646,12 +772,25 @@ impl Manager {
         }
 
         if let Some(setup) = install::find_setup(&dir) {
+            // On Windows the installer writes the game to games_dir/<name>, so its own files move aside first.
+            #[cfg(windows)]
+            let (dir, setup) = {
+                let staged = cfg.games_dir.join(".mercury-repacks").join(slug(&job.name));
+                if staged.exists() { tokio::fs::remove_dir_all(&staged).await?; }
+                tokio::fs::create_dir_all(staged.parent().unwrap()).await?;
+                tokio::fs::rename(&dir, &staged).await?;
+                let setup = staged.join(setup.file_name().unwrap());
+                (staged, setup)
+            };
             self.update(id, |j| { j.dir = Some(dir.clone()); j.setup_exe = Some(setup); j.state = State::NeedsSetup });
             return Ok(());
         }
         let cands = install::find_game_exe(&dir, &job.name);
         let exe = cands.first().filter(|c| c.score > -500).map(|c| c.path.clone()).ok_or_else(|| anyhow!("No game .exe found after extracting"))?;
-        self.update(id, |j| { j.dir = Some(dir.clone()); j.exe = Some(exe); j.candidates = cands.into_iter().take(8).map(|c| c.path).collect(); j.state = State::Ready });
+        let st = self.installed_state();
+        self.update(id, |j| { j.dir = Some(dir.clone()); j.exe = Some(exe); j.candidates = cands.into_iter().take(8).map(|c| c.path).collect(); j.state = st });
+        #[cfg(windows)]
+        self.add_to_library(id).await?;
         Ok(())
     }
 }
