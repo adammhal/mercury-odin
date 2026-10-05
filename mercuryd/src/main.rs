@@ -10,6 +10,8 @@ mod jobs;
 mod rd;
 mod sources;
 mod steam;
+#[cfg(windows)]
+mod steamwin;
 mod storage;
 mod warmup;
 
@@ -35,6 +37,13 @@ impl IntoResponse for ApiError {
 impl<E: Into<anyhow::Error>> From<E> for ApiError { fn from(e: E) -> Self { Self(e.into()) } }
 type R = Result<Json<Value>, ApiError>;
 
+fn steam_status() -> Value {
+    #[cfg(windows)]
+    return steamwin::status();
+    #[cfg(not(windows))]
+    json!({ "found": false, "flag": false })
+}
+
 fn warmup_installed() -> bool {
     #[cfg(windows)]
     return warmup::db_path().is_some();
@@ -58,6 +67,8 @@ async fn status(State(a): State<App>) -> R {
         "storage": { "total": s.total, "free": s.free, "mercury": mercury },
         "platform": std::env::consts::OS,
         "warmup": warmup_installed(),
+        "launcher": c.launcher,
+        "steam": steam_status(),
     })))
 }
 
@@ -175,6 +186,30 @@ async fn open_url(Json(o): Json<OpenUrl>) -> R {
     Ok(Json(json!({ "ok": true })))
 }
 
+/// Windows: make sure Steam runs with its debug port open and that Mercury has its own Steam shortcut (with art).
+async fn launcher_setup(State(a): State<App>) -> R {
+    #[cfg(windows)]
+    {
+        let http = a.m.http.clone();
+        steamwin::ensure_ready(&http).await?;
+        let known = cfg(&a).steam_self_id;
+        if let Some(id) = known { if steamwin::shortcut_exists(&http, id).await { return Ok(Json(json!({ "ok": true, "shortcut": id, "added": false }))); } }
+        let dir = std::env::current_exe()?.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+        let exe = dir.join("Mercury.exe");
+        let mut art = vec![];
+        for (t, f) in [(0u8, "cover.jpg"), (1, "hero.jpg")] {
+            if let Ok(b) = std::fs::read(dir.join("art").join(f)) {
+                art.push((t, "jpg".to_string(), base64::Engine::encode(&base64::engine::general_purpose::STANDARD, b)));
+            }
+        }
+        let id = steamwin::add_shortcut(&http, "Mercury", &exe, &art).await?;
+        a.m.set_steam_self(id);
+        Ok(Json(json!({ "ok": true, "shortcut": id, "added": true })))
+    }
+    #[cfg(not(windows))]
+    { let _ = a; Err(anyhow::anyhow!("only available on Windows").into()) }
+}
+
 /// Windows: sleep, restart, shut down or sign out. The command runs 1.5 s after this reply goes out, with no
 /// shutdown.exe countdown (a non-zero /t makes Windows pop up a "you are about to be signed out" warning).
 async fn power(Path(action): Path<String>) -> R {
@@ -226,6 +261,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/library/{appid}/play", post(play))
         .route("/open", post(open_url))
         .route("/power/{action}", post(power))
+        .route("/launcher/setup", post(launcher_setup))
         .with_state(App { m })
         // The Windows app's window (tauri.localhost) calls the engine from a different origin.
         .layer(tower_http::cors::CorsLayer::new()

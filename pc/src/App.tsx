@@ -15,8 +15,8 @@ import { Settings } from "./pages/Settings";
 import { checkBrowserDownload } from "./browser";
 import { pc } from "./pcapi";
 
-// On the PC, a finished game goes to warmUP instead of Steam.
-STATE_LABEL.ready = "Adding to warmUP";
+// On the PC, a finished game goes into Steam (Big Picture) with its art.
+STATE_LABEL.ready = "Adding to Steam";
 
 /** The screens were designed for the Odin's 910x512 Big Picture viewport. Scale to the window's height
  * and let the width follow the screen's shape, so the app always fills the screen with no borders. */
@@ -29,7 +29,7 @@ function useFrame() {
 }
 
 function quit() {
-  showModal(<ConfirmModal strTitle="Close Mercury?" strOKButtonText="Close" strDescription="Downloads keep going in the background, and finished games still appear in warmUP."
+  showModal(<ConfirmModal strTitle="Close Mercury?" strOKButtonText="Close" strDescription="Downloads keep going in the background, and finished games still appear in Steam."
     onOK={() => { getCurrentWindow().close().catch(() => window.close()); }} />);
 }
 
@@ -82,7 +82,7 @@ function useWatcher() {
       for (const j of jobs) {
         const prev = seen.get(j.id); seen.set(j.id, j.state);
         if (!prev || prev === j.state) continue;
-        if (j.state === "done") toast(j.error ?? `${j.name} is installed and in warmUP. Press library sync in warmUP.`, "Mercury");
+        if (j.state === "done") toast(j.error ?? `${j.name} is installed and in your Steam library.`, "Mercury");
         if (j.state === "needs_setup") toast(j.error ?? `${j.name} downloaded. Run its installer from Downloads.`, "Mercury");
         if (j.state === "failed") toast(`${j.name} failed: ${j.error ?? "unknown error"}`, "Mercury");
       }

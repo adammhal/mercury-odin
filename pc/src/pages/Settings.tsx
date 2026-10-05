@@ -36,7 +36,7 @@ export function Settings() {
         </PanelSection>
         <PanelSection title="Games">
           <Field label="Install folder" description={cfg.games_dir} />
-          <Field label="warmUP" description={status?.warmup ? "Found. Installed games are added to warmUP; press library sync there to see them." : "warmUP not found. Games still install, but are not added to a launcher."} />
+          <Field label="Steam" description={!status?.steam?.found ? "Steam not found. Games still install, but are not added to a launcher." : status.launcher === "warmup" ? "Installed games go to warmUP." : status.steam.flag ? "Found. Installed games are added to your Steam library with their art." : "Found. Mercury turns on its Steam connection the first time it adds a game."} />
           <ToggleField label="Search SteamRIP" description="Pre-installed games from the SteamRIP feed" checked={cfg.enable_steamrip} onChange={(v) => save({ enable_steamrip: v })} />
         </PanelSection>
         <PanelSection title="Status">

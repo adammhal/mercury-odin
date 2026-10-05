@@ -35,11 +35,11 @@ export function Game() {
   };
 
   const viaBrowser = (s: Source) => showModal(<ConfirmModal strTitle="Download in your browser" strOKButtonText="Open browser"
-    strDescription={`Real-Debrid cannot fetch from this host, so you download it yourself.\n\n1. Mercury opens the download page in your browser.\n2. Press the host's Download button and save to your Downloads folder.\n3. When the file finishes, Mercury installs ${app?.name ?? "the game"} and adds it to warmUP.`}
+    strDescription={`Real-Debrid cannot fetch from this host, so you download it yourself.\n\n1. Mercury opens the download page in your browser.\n2. Press the host's Download button and save to your Downloads folder.\n3. When the file finishes, Mercury installs ${app?.name ?? "the game"} and adds it to Steam.`}
     onOK={async () => { try { await downloadInBrowser(appid, app!.name, s); } catch (e: any) { toaster.toast({ title: "Mercury", body: e.message }); } }} />);
 
   const uninstall = () => showModal(<ConfirmModal strTitle={`Uninstall ${entry?.name}?`} strOKButtonText="Uninstall"
-    strDescription={`Deletes ${bytes(entry?.size ?? 0)} and removes it from warmUP.`}
+    strDescription={`Deletes ${bytes(entry?.size ?? 0)} and removes it from Steam.`}
     onOK={async () => { try { await api.uninstall(appid); reloadLib(); } catch (e: any) { toaster.toast({ title: "Mercury", body: e.message }); } }} />);
 
   const play = async () => { try { await pc.play(appid); } catch (e: any) { toaster.toast({ title: "Mercury", body: e.message }); } };

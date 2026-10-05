@@ -275,9 +275,26 @@ impl Manager {
         let dir = if repack { self.cfg.lock().unwrap().games_dir.join(slug(&job.name)) } else { job.dir.clone().unwrap_or_default() };
         let app = crate::steam::details(&self.http, job.appid).await.ok();
         let name: String = job.name.chars().filter(|c| !matches!(c, '\u{2122}' | '\u{00ae}' | '\u{00a9}')).collect::<String>().trim().to_string();
-        let warmup = crate::warmup::add(&exe, &dir, &name, app.as_ref(), job.appid);
-        if let Err(e) = &warmup { tracing::warn!("warmUP: could not add {name}: {e:#}"); }
-        let entry = Entry { appid: job.appid, name: name.clone(), size: storage::dir_size(&dir), dir, exe: exe.clone(), shortcut_id: 0,
+        let launcher = self.cfg.lock().unwrap().launcher.clone();
+        let mut shortcut_id = 0u32;
+        let added: Result<()> = if launcher == "warmup" {
+            let r = crate::warmup::add(&exe, &dir, &name, app.as_ref(), job.appid);
+            if let Err(e) = &r { tracing::warn!("warmUP: could not add {name}: {e:#}"); }
+            r.map(|_| ()).map_err(|e| anyhow!("Installed, but not added to warmUP: {e:#}"))
+        } else {
+            let r: Result<u32> = async {
+                // A reinstall replaces the old shortcut instead of leaving two.
+                let old = self.saved.lock().unwrap().library.iter().find(|e| e.appid == job.appid).map(|e| e.shortcut_id).unwrap_or(0);
+                let _ = crate::steamwin::remove_shortcut(&self.http, old).await;
+                let art = crate::steam::art(&self.http, job.appid).await.assets;
+                crate::steamwin::add_shortcut(&self.http, &name, &exe, &art).await
+            }.await;
+            match r {
+                Ok(id) => { shortcut_id = id; Ok(()) }
+                Err(e) => { tracing::warn!("Steam: could not add {name}: {e:#}"); Err(anyhow!("Installed, but not added to Steam: {e:#}")) }
+            }
+        };
+        let entry = Entry { appid: job.appid, name: name.clone(), size: storage::dir_size(&dir), dir, exe: exe.clone(), shortcut_id,
             provider: job.source.provider.clone(), version: job.source.version.clone(), installed: now(),
             installer_dir: if repack { job.dir.clone() } else { None } };
         let mut s = self.saved.lock().unwrap();
@@ -285,10 +302,17 @@ impl Manager {
         s.library.push(entry);
         if let Some(j) = s.jobs.iter_mut().find(|j| j.id == id) {
             j.state = State::Done;
-            j.error = warmup.err().map(|e| format!("Installed, but not added to warmUP: {e:#}"));
+            j.shortcut_id = if shortcut_id != 0 { Some(shortcut_id) } else { None };
+            j.error = added.err().map(|e| format!("{e:#}"));
         }
         self.save(&s);
         Ok(())
+    }
+
+    pub fn set_steam_self(&self, id: u32) {
+        let mut c = self.cfg.lock().unwrap();
+        c.steam_self_id = Some(id);
+        let _ = c.save();
     }
 
     /// Installer files of a repack that is already installed, and their size.
@@ -347,7 +371,11 @@ impl Manager {
         s.jobs.retain(|j| j.appid != appid || j.state.active());
         self.save(&s);
         #[cfg(windows)]
-        if let Err(err) = crate::warmup::remove(&e.exe) { tracing::warn!("warmUP: could not remove {}: {err:#}", e.name); }
+        {
+            if let Err(err) = crate::warmup::remove(&e.exe) { tracing::warn!("warmUP: could not remove {}: {err:#}", e.name); }
+            let (http, sid, name) = (self.http.clone(), e.shortcut_id, e.name.clone());
+            tokio::spawn(async move { if let Err(err) = crate::steamwin::remove_shortcut(&http, sid).await { tracing::warn!("Steam: could not remove {name}: {err:#}"); } });
+        }
         let (dir, sid) = (e.dir.clone(), e.shortcut_id);
         std::thread::spawn(move || {
             let _ = std::fs::remove_dir_all(&dir);

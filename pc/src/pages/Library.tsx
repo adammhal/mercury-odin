@@ -15,7 +15,7 @@ export function Library() {
         <div style={{ fontSize: 18, fontWeight: 700, color: "#fff", marginBottom: 10 }}>
           Installed with Mercury <span style={{ fontSize: 14, color: C.dim, fontWeight: 500 }}>{bytes((lib ?? []).reduce((a, e) => a + e.size, 0))}</span>
         </div>
-        {lib && !lib.length && <div style={{ color: C.dim }}>No games installed with Mercury yet. Games you install also appear in warmUP.</div>}
+        {lib && !lib.length && <div style={{ color: C.dim }}>No games installed with Mercury yet. Games you install also appear in Steam.</div>}
         <Focusable flow-children="vertical">
           {(lib ?? []).map((e) => (
             <Focusable key={e.appid} flow-children="horizontal" onFocus={scrollIntoView}

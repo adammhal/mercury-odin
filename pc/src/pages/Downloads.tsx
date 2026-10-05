@@ -50,7 +50,7 @@ export function Downloads() {
               <div style={{ flex: "none", width: 120, height: 56, borderRadius: 5, background: `url(${cdn(j.appid, "header.jpg")}) center/cover` }} />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <JobProgress job={j} />
-                {j.state === "needs_setup" && <div style={{ fontSize: 12, color: C.warn, marginTop: 4 }}>Repack downloaded. Run its installer, accept the admin prompt, keep the folder it shows, and click through. Mercury adds the game to warmUP when it closes.</div>}
+                {j.state === "needs_setup" && <div style={{ fontSize: 12, color: C.warn, marginTop: 4 }}>Repack downloaded. Run its installer, accept the admin prompt, keep the folder it shows, and click through. Mercury adds the game to Steam when it closes.</div>}
                 {j.state === "installing" && <div style={{ fontSize: 12, color: C.dim, marginTop: 4 }}>Installer running. Finish it in its own window.</div>}
                 <div style={{ fontSize: 12, color: C.dim, marginTop: 4 }}>{j.source.provider} · {j.source.name}</div>
               </div>

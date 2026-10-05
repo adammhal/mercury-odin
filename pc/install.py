@@ -1,6 +1,7 @@
-"""Install Mercury for Windows and add it to warmUP. Run on the PC after `npx tauri build --no-bundle`:
+"""Install Mercury for Windows, add it to Steam, and make Steam start in Big Picture with its debug port open. Run on the PC after `npx tauri build --no-bundle`:
     python install.py
-Copies Mercury.exe and mercuryd.exe to %LOCALAPPDATA%\\Programs\\Mercury and adds a warmUP tile for it."""
+Copies Mercury.exe and mercuryd.exe to %LOCALAPPDATA%\\Programs\\Mercury, adds a Steam shortcut for it, and puts a
+Big Picture shortcut in the Startup folder. Pass --warmup to also refresh the warmUP tile."""
 import base64, os, shutil, sqlite3, subprocess, sys, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -26,6 +27,32 @@ os.makedirs(DEST, exist_ok=True)
 shutil.copy2(app, os.path.join(DEST, "Mercury.exe"))
 shutil.copy2(engine, os.path.join(DEST, "mercuryd.exe"))
 print("installed to", DEST)
+shutil.copytree(os.path.join(HERE, "art"), os.path.join(DEST, "art"), dirs_exist_ok=True)
+
+# Steam (Big Picture) is the launcher: start it at login in Big Picture, with the debug-port flag file Mercury needs.
+def steam_dir():
+    for p in (os.path.join(os.environ.get("ProgramFiles(x86)", ""), "Steam"), r"C:\Program Files (x86)\Steam"):
+        if os.path.isfile(os.path.join(p, "steam.exe")): return p
+steam = steam_dir()
+if steam:
+    open(os.path.join(steam, ".cef-enable-remote-debugging"), "a").close()
+    lnk = os.path.join(os.environ["APPDATA"], "Microsoft", "Windows", "Start Menu", "Programs", "Startup", "Steam Big Picture.lnk")
+    subprocess.run(["powershell", "-NoProfile", "-Command",
+        f"$s=(New-Object -ComObject WScript.Shell).CreateShortcut('{lnk}'); $s.TargetPath='{steam}\\steam.exe'; $s.Arguments='-bigpicture'; $s.WorkingDirectory='{steam}'; $s.Save()"], check=True)
+    print("startup shortcut:", lnk)
+    # Start the engine detached (it outlives this script) and let it add Mercury to Steam, restarting Steam once if needed.
+    for flags in (0x00000008 | 0x00000200 | 0x01000000, 0x00000008 | 0x00000200):
+        try: subprocess.Popen([os.path.join(DEST, "mercuryd.exe")], creationflags=flags, close_fds=True); break
+        except OSError: pass
+    import json, urllib.request
+    for _ in range(20):
+        try: urllib.request.urlopen("http://127.0.0.1:47800/status", timeout=2); break
+        except Exception: time.sleep(1)
+    try: print("Steam setup:", json.load(urllib.request.urlopen(urllib.request.Request("http://127.0.0.1:47800/launcher/setup", method="POST", data=b"{}", headers={"Content-Type": "application/json"}), timeout=150)))
+    except Exception as e: print("Steam setup failed:", e)
+else:
+    print("Steam not found; skipped the Big Picture setup")
+if "--warmup" not in sys.argv: sys.exit(0)
 
 if not os.path.isfile(WARMUP):
     sys.exit("warmUP not found; Mercury is installed but has no warmUP tile")
