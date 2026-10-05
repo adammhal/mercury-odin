@@ -19,6 +19,10 @@ pub struct Config {
     pub launcher: String,
     /// Windows: the Steam shortcut for Mercury itself.
     pub steam_self_id: Option<u32>,
+    /// SteamGridDB API key, for picking artwork.
+    pub sgdb_key: String,
+    /// Windows: ask to confirm the title and artwork before a finished game goes to Steam.
+    pub review_art: bool,
 }
 
 impl Default for Config {
@@ -38,6 +42,8 @@ impl Default for Config {
             browser_shortcut_id: None,
             launcher: "steam".into(),
             steam_self_id: None,
+            sgdb_key: String::new(),
+            review_art: true,
         }
     }
 }
@@ -81,6 +87,8 @@ impl Config {
     pub fn public(&self) -> serde_json::Value {
         let mut v = serde_json::to_value(self).unwrap_or_default();
         v["rd_key"] = serde_json::Value::String(String::new());
+        v["sgdb_key"] = serde_json::Value::String(String::new());
+        v["sgdb_key_set"] = serde_json::Value::Bool(!self.sgdb_key.is_empty());
         v["rd_key_set"] = serde_json::Value::Bool(!self.rd_key.is_empty());
         v
     }

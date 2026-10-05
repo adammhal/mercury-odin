@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useState } from "react";
 import { HashRouter, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { ConfirmModal, Focusable, ModalHost, setNavigate, showModal, ToastHost, toast } from "./shim/ui";
+import { ConfirmModal, Focusable, ModalHost, Navigation, setNavigate, showModal, ToastHost, toast } from "./shim/ui";
 import { focusFirst, press, setGlobalHandlers } from "./shim/nav";
 import { api, Job, STATE_LABEL } from "@shared/api";
 import { usePoll } from "@shared/hooks";
@@ -12,6 +12,7 @@ import { Game } from "./pages/Game";
 import { Downloads } from "./pages/Downloads";
 import { Library } from "./pages/Library";
 import { Settings } from "./pages/Settings";
+import { Review } from "@shared/pages/Review";
 import { checkBrowserDownload } from "./browser";
 import { pc } from "./pcapi";
 
@@ -77,10 +78,13 @@ function Glyph({ k, label, onClick }: { k: string; label: string; onClick?: () =
 function useWatcher() {
   useEffect(() => {
     const seen = new Map<number, string>();
+    const prompted = new Set<number>();
     const tick = async () => {
       let jobs: Job[]; try { jobs = await api.jobs(); } catch { return; }
       for (const j of jobs) {
         const prev = seen.get(j.id); seen.set(j.id, j.state);
+        // A finished install waits for the user to confirm its title and art before going to Steam.
+        if (j.state === "review" && !prompted.has(j.id)) { prompted.add(j.id); Navigation.Navigate(`/mercury/review/${j.id}`); }
         if (!prev || prev === j.state) continue;
         if (j.state === "done") toast(j.error ?? `${j.name} is installed and in your Steam library.`, "Mercury");
         if (j.state === "needs_setup") toast(j.error ?? `${j.name} downloaded. Run its installer from Downloads.`, "Mercury");
@@ -125,6 +129,7 @@ function Shell() {
           <Route path="/mercury/library" element={<Library />} />
           <Route path="/mercury/search" element={<Search />} />
           <Route path="/mercury/settings" element={<Settings />} />
+          <Route path="/mercury/review/:id" element={<Review />} />
           <Route path="*" element={<Navigate to="/mercury" replace />} />
         </Routes>
 

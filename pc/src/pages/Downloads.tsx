@@ -1,4 +1,4 @@
-import { ConfirmModal, Focusable, showModal } from "@decky/ui";
+import { ConfirmModal, Focusable, Navigation, showModal } from "@decky/ui";
 import { toaster } from "@decky/api";
 import { api, cdn, Job } from "@shared/api";
 import { usePoll } from "@shared/hooks";
@@ -14,8 +14,9 @@ function Actions({ job, reload }: { job: Job; reload: () => void }) {
   if (["queued", "resolving", "caching", "downloading"].includes(job.state)) out.push(b("Pause", act("pause")));
   if (["paused", "failed"].includes(job.state)) out.push(b(job.state === "failed" ? "Retry" : "Resume", act("resume")));
   if (job.state === "needs_setup") out.push(b("Run installer", run(() => pc.runSetup(job.id))));
+  if (job.state === "review") out.push(b("Review & add", () => Navigation.Navigate(`/mercury/review/${job.id}`)));
   const finished = ["done", "failed", "cancelled"].includes(job.state);
-  if (!finished && job.state !== "installing") out.push(b("Cancel", () => showModal(
+  if (!finished && job.state !== "installing" && job.state !== "review") out.push(b("Cancel", () => showModal(
     <ConfirmModal strTitle={`Cancel ${job.name}?`} strDescription="Stops the download, deletes its files, and removes it from this list." strOKButtonText="Cancel download" onOK={act("cancel")} />)));
   if (finished) out.push(b("Clear", act("remove")));
   return <Focusable flow-children="horizontal" style={{ display: "flex", gap: 8 }}>{out}</Focusable>;

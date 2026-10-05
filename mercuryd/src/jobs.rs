@@ -10,7 +10,7 @@ use std::{collections::HashMap, path::PathBuf, sync::{Arc, Mutex, atomic::{Atomi
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum State { Queued, Resolving, Caching, Downloading, Paused, Extracting, NeedsSetup, Installing, Ready, Done, Failed, Cancelled }
+pub enum State { Queued, Resolving, Caching, Downloading, Paused, Extracting, NeedsSetup, Installing, Ready, Review, Done, Failed, Cancelled }
 
 impl State {
     pub fn active(self) -> bool { !matches!(self, State::Done | State::Failed | State::Cancelled) }
@@ -269,12 +269,31 @@ impl Manager {
     /// Windows: record the game in Mercury's library and add it to warmUP.
     #[cfg(windows)]
     async fn add_to_library(&self, id: u64) -> Result<()> {
+        let (launcher, review) = { let c = self.cfg.lock().unwrap(); (c.launcher.clone(), c.review_art) };
+        if launcher != "warmup" && review {
+            // Wait for the user to confirm the title and artwork (the Review screen), then `confirm_review` finishes the job.
+            self.update(id, |j| { j.state = State::Review; j.error = None });
+            return Ok(());
+        }
+        self.finalize_add(id, None, Default::default()).await
+    }
+
+    /// The user confirmed the Review screen: add the game to Steam with the chosen title and artwork.
+    #[cfg(windows)]
+    pub async fn confirm_review(self: Arc<Self>, id: u64, name: Option<String>, art: HashMap<String, String>) -> Result<()> {
+        if self.get(id).ok_or_else(|| anyhow!("no such job"))?.state != State::Review { bail!("this game is not waiting for review"); }
+        self.finalize_add(id, name, art).await
+    }
+
+    #[cfg(windows)]
+    async fn finalize_add(&self, id: u64, name_override: Option<String>, choices: HashMap<String, String>) -> Result<()> {
         let job = self.get(id).ok_or_else(|| anyhow!("no such job"))?;
         let exe = job.exe.clone().ok_or_else(|| anyhow!("no exe"))?;
         let repack = job.setup_exe.is_some();
         let dir = if repack { self.cfg.lock().unwrap().games_dir.join(slug(&job.name)) } else { job.dir.clone().unwrap_or_default() };
         let app = crate::steam::details(&self.http, job.appid).await.ok();
-        let name: String = job.name.chars().filter(|c| !matches!(c, '\u{2122}' | '\u{00ae}' | '\u{00a9}')).collect::<String>().trim().to_string();
+        let name: String = name_override.map(|n| n.trim().to_string()).filter(|n| !n.is_empty())
+            .unwrap_or_else(|| job.name.chars().filter(|c| !matches!(c, '\u{2122}' | '\u{00ae}' | '\u{00a9}')).collect::<String>().trim().to_string());
         let launcher = self.cfg.lock().unwrap().launcher.clone();
         let mut shortcut_id = 0u32;
         let added: Result<()> = if launcher == "warmup" {
@@ -286,7 +305,7 @@ impl Manager {
                 // A reinstall replaces the old shortcut instead of leaving two.
                 let old = self.saved.lock().unwrap().library.iter().find(|e| e.appid == job.appid).map(|e| e.shortcut_id).unwrap_or(0);
                 let _ = crate::steamwin::remove_shortcut(&self.http, old).await;
-                let art = crate::steam::art(&self.http, job.appid).await.assets;
+                let art = crate::sgdb::resolve(&self.http, job.appid, &choices).await?;
                 crate::steamwin::add_shortcut(&self.http, &name, &exe, &art).await
             }.await;
             match r {

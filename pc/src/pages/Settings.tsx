@@ -8,6 +8,7 @@ import { Btn, C, FocusStyle, page } from "@shared/ui";
 export function Settings() {
   const [cfg, setCfg] = useState<Config>();
   const [key, setKey] = useState("");
+  const [sgdb, setSgdb] = useState("");
   const [status, , reloadStatus] = usePoll(api.status as () => Promise<any>, 0);
   useEffect(() => { api.config().then(setCfg, () => {}); }, []);
 
@@ -33,6 +34,15 @@ export function Settings() {
             <Btn style={{ width: 180 }} disabled={!key} onClick={async () => { await save({ rd_key: key }); setKey(""); }}>Save key</Btn>
             <Btn style={{ width: 180 }} disabled={!cfg.rd_key_set} onClick={check}>Test key</Btn>
           </Focusable>
+        </PanelSection>
+        <PanelSection title="Artwork">
+          <Field label="SteamGridDB key" description={cfg.sgdb_key_set ? "A key is saved. Type a new one to replace it." : "Not set. Create one at steamgriddb.com under Preferences, then API."} childrenLayout="below">
+            <TextField bIsPassword value={sgdb} onChange={(e) => setSgdb(e.target.value)} />
+          </Field>
+          <Focusable flow-children="horizontal" style={{ display: "flex", gap: 10, margin: "8px 0 4px" }}>
+            <Btn style={{ width: 180 }} disabled={!sgdb} onClick={async () => { await save({ sgdb_key: sgdb }); setSgdb(""); }}>Save key</Btn>
+          </Focusable>
+          <ToggleField label="Review before adding to Steam" description="After a game installs, confirm its title and artwork before it goes to Steam" checked={cfg.review_art !== false} onChange={(v) => save({ review_art: v })} />
         </PanelSection>
         <PanelSection title="Games">
           <Field label="Install folder" description={cfg.games_dir} />

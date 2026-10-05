@@ -114,6 +114,11 @@ export function ConfirmModal({ strTitle, strDescription, strOKButtonText = "OK",
   );
 }
 
+/** Decky's ModalRoot: the modal's contents. Closing on B is handled by the modal frame. */
+export function ModalRoot({ children }: { children?: ReactNode; closeModal?: () => void; onCancel?: () => void }) {
+  return <>{children}</>;
+}
+
 // ---------- toasts ----------
 const toasts = store<{ id: number; title?: string; body: string }[]>([]);
 let nextToast = 1;

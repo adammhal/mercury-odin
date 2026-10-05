@@ -9,6 +9,7 @@ mod install;
 mod jobs;
 mod rd;
 mod sources;
+mod sgdb;
 mod steam;
 #[cfg(windows)]
 mod steamwin;
@@ -78,6 +79,7 @@ async fn put_config(State(a): State<App>, Json(mut v): Json<Value>) -> R {
     let mut c = cfg(&a);
     // An empty key from the UI means "unchanged"; the UI never sees the stored key.
     if v["rd_key"].as_str().is_none_or(|k| k.is_empty()) { v["rd_key"] = json!(c.rd_key); }
+    if v["sgdb_key"].as_str().is_none_or(|k| k.is_empty()) { v["sgdb_key"] = json!(c.sgdb_key); }
     let mut merged = serde_json::to_value(&c)?;
     if let (Some(m), Some(n)) = (merged.as_object_mut(), v.as_object()) {
         for (k, val) in n { if m.contains_key(k) { m.insert(k.clone(), val.clone()); } }
@@ -140,7 +142,10 @@ struct Since { #[serde(default)] since: u64 }
 async fn browser_downloads(Query(q): Query<Since>) -> R { Ok(Json(json!(browser::list(&config::browser_downloads_dir(), q.since)))) }
 
 #[derive(Deserialize, Default)]
-struct Act { #[serde(default)] shortcut_id: Option<u32>, #[serde(default)] exe: Option<std::path::PathBuf> }
+struct Act {
+    #[serde(default)] shortcut_id: Option<u32>, #[serde(default)] exe: Option<std::path::PathBuf>,
+    #[serde(default)] name: Option<String>, #[serde(default)] art: std::collections::HashMap<String, String>,
+}
 async fn job_action(State(a): State<App>, Path((id, act)): Path<(u64, String)>, body: Option<Json<Act>>) -> R {
     let b = body.map(|b| b.0).unwrap_or_default();
     match act.as_str() {
@@ -152,6 +157,8 @@ async fn job_action(State(a): State<App>, Path((id, act)): Path<(u64, String)>, 
         "setup-done" => return Ok(Json(json!(a.m.setup_done(id)?))),
         #[cfg(windows)]
         "run-setup" => a.m.clone().run_setup(id).await?,
+        #[cfg(windows)]
+        "confirm" => a.m.clone().confirm_review(id, b.name, b.art).await?,
         "steam-added" => a.m.steam_added(id, b.shortcut_id.ok_or_else(|| anyhow::anyhow!("shortcut_id required"))?, b.exe)?,
         _ => return Err(anyhow::anyhow!("unknown action {act}").into()),
     }
@@ -184,6 +191,18 @@ async fn open_url(Json(o): Json<OpenUrl>) -> R {
     #[cfg(not(windows))]
     std::process::Command::new("xdg-open").arg(&o.url).spawn()?;
     Ok(Json(json!({ "ok": true })))
+}
+
+async fn sgdb_options(State(a): State<App>, Path((appid, slot)): Path<(u32, u8)>) -> R {
+    let key = cfg(&a).sgdb_key;
+    Ok(Json(json!({ "options": sgdb::options(&a.m.http, &key, appid, slot).await? })))
+}
+
+#[derive(Deserialize)]
+struct ResolveReq { appid: u32, #[serde(default)] choices: std::collections::HashMap<String, String> }
+/// Store art with the chosen SteamGridDB images swapped in, ready for SetCustomArtworkForApp.
+async fn art_resolve(State(a): State<App>, Json(r): Json<ResolveReq>) -> R {
+    Ok(Json(json!({ "assets": sgdb::resolve(&a.m.http, r.appid, &r.choices).await? })))
 }
 
 /// Windows: make sure Steam runs with its debug port open and that Mercury has its own Steam shortcut (with art).
@@ -262,6 +281,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/open", post(open_url))
         .route("/power/{action}", post(power))
         .route("/launcher/setup", post(launcher_setup))
+        .route("/sgdb/{appid}/{slot}", get(sgdb_options))
+        .route("/art/resolve", post(art_resolve))
         .with_state(App { m })
         // The Windows app's window (tauri.localhost) calls the engine from a different origin.
         .layer(tower_http::cors::CorsLayer::new()
