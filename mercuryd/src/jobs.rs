@@ -408,7 +408,8 @@ impl Manager {
         };
         let entry = Entry { appid: job.appid, name: name.clone(), size: storage::dir_size(&dir), dir, exe: exe.clone(), shortcut_id,
             provider: job.source.provider.clone(), version: job.source.version.clone(), installed: now(),
-            installer_dir: if repack { job.dir.clone() } else { None } };
+            installer_dir: if repack { job.dir.clone() } else { None },
+            source_name: Some(job.source.name.clone()), source_updated: job.source.updated.clone(), needs_repoint: false, moving_to: None, launch_options_fix: None };
         let mut s = self.saved.lock().unwrap();
         s.library.retain(|e| e.appid != job.appid);
         s.library.push(entry);
