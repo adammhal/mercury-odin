@@ -186,3 +186,12 @@ pub async fn art(http: &reqwest::Client, appid: u32, sgdb_key: &str) -> Art {
     }
     Art { assets, icon }
 }
+
+/// The image Steam shows in `slot` (0 cover, 1 hero, 2 logo, 3 wide) for a shortcut, from Steam's grid folder.
+#[cfg(not(windows))]
+pub fn grid_file(shortcut_id: u32, slot: u8) -> Option<std::path::PathBuf> {
+    let user = steam_id64()? - 76561197960265728;
+    let dir = home().join(".local/share/Steam/userdata").join(user.to_string()).join("config/grid");
+    let stem = match slot { 0 => format!("{shortcut_id}p"), 1 => format!("{shortcut_id}_hero"), 2 => format!("{shortcut_id}_logo"), 3 => shortcut_id.to_string(), _ => return None };
+    ["png", "jpg", "jpeg", "webp"].iter().map(|e| dir.join(format!("{stem}.{e}"))).find(|p| p.is_file())
+}
