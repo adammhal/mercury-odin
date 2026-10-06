@@ -29,10 +29,22 @@ async fn get(http: &reqwest::Client, key: &str, path: &str) -> Result<Value> {
     Ok(r.json().await?)
 }
 
-pub async fn options(http: &reqwest::Client, key: &str, appid: u32, slot: u8) -> Result<Vec<Opt>> {
+/// SteamGridDB's id for a game: by Steam app id, or (when it does not know that id) by searching its name.
+async fn game_id(http: &reqwest::Client, key: &str, appid: u32, name: Option<&str>) -> Result<u64> {
+    if let Ok(g) = get(http, key, &format!("/games/steam/{appid}")).await {
+        if let Some(id) = g["data"]["id"].as_u64() { return Ok(id); }
+    }
+    let name = name.map(str::trim).filter(|n| !n.is_empty()).ok_or_else(|| anyhow!("SteamGridDB does not know this game"))?;
+    let hits = get(http, key, &format!("/search/autocomplete/{}", urlencoding::encode(name))).await?;
+    let norm = |s: &str| s.chars().filter(|c| c.is_alphanumeric()).collect::<String>().to_lowercase();
+    let list = hits["data"].as_array().cloned().unwrap_or_default();
+    list.iter().find(|h| h["name"].as_str().is_some_and(|n| norm(n) == norm(name))).or(list.first())
+        .and_then(|h| h["id"].as_u64()).ok_or_else(|| anyhow!("SteamGridDB has nothing for \"{name}\""))
+}
+
+pub async fn options(http: &reqwest::Client, key: &str, appid: u32, slot: u8, name: Option<&str>) -> Result<Vec<Opt>> {
     let (kind, extra) = endpoint(slot)?;
-    let game = get(http, key, &format!("/games/steam/{appid}")).await?;
-    let id = game["data"]["id"].as_u64().ok_or_else(|| anyhow!("SteamGridDB does not know this game"))?;
+    let id = game_id(http, key, appid, name).await?;
     let mut list = get(http, key, &format!("/{kind}/game/{id}?nsfw=false&humor=any&epilepsy=any{extra}")).await?;
     let mut out: Vec<Opt> = list["data"].as_array_mut().map(std::mem::take).unwrap_or_default().iter().filter_map(|o| Some(Opt {
         url: o["url"].as_str()?.to_string(),

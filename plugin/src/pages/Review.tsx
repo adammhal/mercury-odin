@@ -25,10 +25,10 @@ export function Art({ src, s, tile }: { src: string; s: Slot; tile?: { w: number
 }
 
 /** Choose one SteamGridDB image for a slot. The first tile keeps Steam's own store art. */
-export function ArtPicker({ appid, s, onPick, closeModal }: { appid: number; s: Slot; onPick: (o: SgdbOpt | null) => void; closeModal?: () => void }) {
+export function ArtPicker({ appid, s, name, onPick, closeModal }: { appid: number; s: Slot; name?: string; onPick: (o: SgdbOpt | null) => void; closeModal?: () => void }) {
   const [opts, setOpts] = useState<SgdbOpt[]>();
   const [err, setErr] = useState<string>();
-  useEffect(() => { api.sgdb(appid, s.slot).then((r) => setOpts(r.options), (e) => setErr(e.message)); }, []);
+  useEffect(() => { api.sgdb(appid, s.slot, name).then((r) => setOpts(r.options), (e) => setErr(e.message)); }, []);
   const scale = s.slot === 0 ? 0.9 : s.slot === 1 ? 0.8 : 0.9;
   const tile = { w: Math.round(s.w * scale), h: Math.round(s.h * scale) };
   const pick = (o: SgdbOpt | null) => { closeModal?.(); onPick(o); };
@@ -72,7 +72,7 @@ export function Review() {
     </div></div>
   );
 
-  const choose = (s: Slot) => showModal(<ArtPicker appid={job.appid} s={s} onPick={(o) => setPicked((p) => { const n = { ...p }; if (o) n[s.slot] = o; else delete n[s.slot]; return n; })} />);
+  const choose = (s: Slot) => showModal(<ArtPicker appid={job.appid} s={s} name={job.name} onPick={(o) => setPicked((p) => { const n = { ...p }; if (o) n[s.slot] = o; else delete n[s.slot]; return n; })} />);
   const confirm = async () => {
     setBusy(true);
     try {

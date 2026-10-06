@@ -360,9 +360,13 @@ async fn open_url(Json(o): Json<OpenUrl>) -> R {
     Ok(Json(json!({ "ok": true })))
 }
 
-async fn sgdb_options(State(a): State<App>, Path((appid, slot)): Path<(u32, u8)>) -> R {
+#[derive(Deserialize, Default)]
+struct NameQ { name: Option<String> }
+async fn sgdb_options(State(a): State<App>, Path((appid, slot)): Path<(u32, u8)>, Query(q): Query<NameQ>) -> R {
     let key = cfg(&a).sgdb_key;
-    Ok(Json(json!({ "options": sgdb::options(&a.m.http, &key, appid, slot).await? })))
+    // Games SteamGridDB does not know by Steam id are looked up by name: the one the app sent, or the library entry's.
+    let name = q.name.or_else(|| a.m.library().into_iter().find(|e| e.appid == appid).map(|e| e.name));
+    Ok(Json(json!({ "options": sgdb::options(&a.m.http, &key, appid, slot, name.as_deref()).await? })))
 }
 
 #[derive(Deserialize)]

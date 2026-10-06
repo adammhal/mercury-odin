@@ -23,7 +23,7 @@ export function EditArt() {
 
   const title = name ?? entry.name;
   const changed = Object.keys(picked).length > 0 || title.trim() !== entry.name;
-  const choose = (s: Slot) => showModal(<ArtPicker appid={appid} s={s} onPick={(o) =>
+  const choose = (s: Slot) => showModal(<ArtPicker appid={appid} s={s} name={entry.name} onPick={(o) =>
     setPicked((p) => ({ ...p, [s.slot]: o ?? { url: "default", thumb: cdn(appid, s.file), score: 0, width: 0, height: 0, author: "" } }))} />);
   const save = async () => {
     setBusy(true);

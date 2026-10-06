@@ -55,7 +55,7 @@ export const api = {
   search: (q: string) => req<App[]>(`/steam/search?q=${encodeURIComponent(q)}`),
   app: (id: number) => req<App>(`/steam/app/${id}`),
   art: (id: number) => req<{ assets: [number, string, string][]; icon?: string | null }>(`/steam/art/${id}`),
-  sgdb: (appid: number, slot: number) => req<{ options: SgdbOpt[] }>(`/sgdb/${appid}/${slot}`),
+  sgdb: (appid: number, slot: number, name?: string) => req<{ options: SgdbOpt[] }>(`/sgdb/${appid}/${slot}${name ? `?name=${encodeURIComponent(name)}` : ""}`),
   editArt: (appid: number, body: { name?: string; art: Record<string, string> }) => req<{ ok: boolean; changed: boolean }>(`/library/${appid}/art`, "POST", body),
   resolveArt: (appid: number, choices: Record<string, string>) => req<{ assets: [number, string, string][] }>("/art/resolve", "POST", { appid, choices }),
   sources: (name: string, refresh = false) =>
