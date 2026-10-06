@@ -201,7 +201,7 @@ fn hid_pads() -> Vec<(String, u16, u16)> {
     out
 }
 
-fn start_hid(stop: Arc<AtomicBool>) -> Hid {
+fn start_hid(stop: Arc<AtomicBool>, verbose: bool) -> Hid {
     let latest: Arc<Mutex<Option<(u16, Vec<u8>)>>> = Arc::new(Mutex::new(None));
     let mut handles = vec![];
     for (path, vid, pid) in hid_pads() {
@@ -212,7 +212,7 @@ fn start_hid(stop: Arc<AtomicBool>) -> Hid {
             if HidD_GetPreparsedData(h, &mut pp) != 0 { HidP_GetCaps(pp, &mut caps); HidD_FreePreparsedData(pp); }
             caps.InputReportByteLength as usize
         };
-        tracing::info!("assist: reading Sony HID {vid:04x}:{pid:04x}, input report {len} bytes");
+        if verbose { tracing::info!("assist: reading Sony HID {vid:04x}:{pid:04x}, input report {len} bytes"); }
         if len < 10 { unsafe { CloseHandle(h); } continue; }
         handles.push(h as usize);
         let (latest, stop, hh) = (latest.clone(), stop.clone(), h as usize);
@@ -264,7 +264,7 @@ pub fn start_home_watch() {
     std::thread::spawn(|| {
         let never = Arc::new(AtomicBool::new(false));
         loop {
-            let hid = start_hid(never.clone());
+            let hid = start_hid(never.clone(), false);
             if hid.handles.is_empty() { std::thread::sleep(Duration::from_secs(4)); continue; }
             let rescan = Instant::now() + Duration::from_secs(30);
             let mut was = false;
@@ -309,7 +309,7 @@ fn axis(v: i16) -> f32 {
 fn run(mode: &Mode, stop: &Arc<AtomicBool>) {
     tracing::info!("assist: started ({})", mode.arg());
     let browser = matches!(mode, Mode::Browser);
-    let hid = start_hid(stop.clone());
+    let hid = start_hid(stop.clone(), true);
     let mut tries = 0u32;
     let (mut prev, mut last_front, mut last_scan, mut last_log) = (Pad::default(), Instant::now() - Duration::from_secs(10), Instant::now() - Duration::from_secs(10), Instant::now() - Duration::from_secs(10));
     let mut wheel = 0f32;
