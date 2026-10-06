@@ -40,7 +40,11 @@ async fn game_id(http: &reqwest::Client, key: &str, appid: u32, name: Option<&st
     let hits = get(http, key, &format!("/search/autocomplete/{}", urlencoding::encode(name))).await?;
     let norm = |s: &str| s.chars().filter(|c| c.is_alphanumeric()).collect::<String>().to_lowercase();
     let list = hits["data"].as_array().cloned().unwrap_or_default();
-    list.iter().find(|h| h["name"].as_str().is_some_and(|n| norm(n) == norm(name))).or(list.first())
+    let exact = list.iter().find(|h| h["name"].as_str().is_some_and(|n| norm(n) == norm(name)));
+    // An automatic lookup only accepts a real match (the same name, or one containing the other); a search the user typed
+    // takes SteamGridDB's best guess, and the picker shows which game it found.
+    let close = list.iter().find(|h| h["name"].as_str().is_some_and(|n| { let (a, b) = (norm(n), norm(name)); !a.is_empty() && (a.contains(&b) || b.contains(&a)) }));
+    exact.or(close).or(if by_name { list.first() } else { None })
         .and_then(|h| Some((h["id"].as_u64()?, h["name"].as_str().unwrap_or_default().to_string()))).ok_or_else(|| anyhow!("SteamGridDB has nothing for \"{name}\""))
 }
 
