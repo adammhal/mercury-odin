@@ -45,8 +45,9 @@ fn browser_assist(action: &str) {
 
 /// A full-screen browser for hosts Real-Debrid cannot fetch. The engine's helper drives it with the controller; a finished
 /// download is saved to Downloads, where Mercury's watcher picks it up, and the window closes itself.
+// async: building a window inside a synchronous command freezes the whole app on Windows.
 #[tauri::command]
-fn open_browser(app: tauri::AppHandle, url: String) -> Result<(), String> {
+async fn open_browser(app: tauri::AppHandle, url: String) -> Result<(), String> {
     use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent, webview::DownloadEvent};
     if !(url.starts_with("https://") || url.starts_with("http://")) { return Err("not a web link".into()); }
     let parsed: tauri::Url = url.parse().map_err(|_| "bad link".to_string())?;
@@ -73,8 +74,8 @@ fn open_browser(app: tauri::AppHandle, url: String) -> Result<(), String> {
         })
         .build()
         .map_err(|e| e.to_string())?;
-    win.on_window_event(|e| { if let WindowEvent::Destroyed = e { browser_assist("stop"); } });
-    browser_assist("start");
+    win.on_window_event(|e| { if let WindowEvent::Destroyed = e { std::thread::spawn(|| browser_assist("stop")); } });
+    std::thread::spawn(|| browser_assist("start"));
     Ok(())
 }
 

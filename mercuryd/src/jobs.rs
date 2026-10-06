@@ -446,6 +446,33 @@ impl Manager {
         Ok(())
     }
 
+    /// Windows: add games that are already installed (and already in Steam) to Mercury's library, so they can be
+    /// found, played and uninstalled from Mercury. The game's folder is worked out here: the top folder under the games
+    /// folder or a "Game Folders" folder, never a drive, the games folder itself, or a folder that is not above the exe.
+    #[cfg(windows)]
+    pub fn register(&self, items: Vec<(u32, String, PathBuf, u32)>) -> Vec<String> {
+        let games_dir = self.cfg.lock().unwrap().games_dir.clone();
+        let mut done = vec![];
+        for (appid, name, exe, shortcut_id) in items {
+            let norm = |p: &std::path::Path| p.display().to_string().to_lowercase().replace('/', "\\");
+            let root_of = |c: &std::path::Path| -> bool {
+                c.parent().is_some_and(|par| norm(par) == norm(&games_dir) || par.file_name().is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case("Game Folders")))
+            };
+            let dir = exe.ancestors().skip(1).find(|c| root_of(c)).map(|c| c.to_path_buf()).or_else(|| exe.parent().map(|p| p.to_path_buf()));
+            let Some(dir) = dir else { continue };
+            if !exe.is_file() || dir.parent().is_none() { continue; }
+            let size = storage::dir_size(&dir);
+            let entry = Entry { appid, name: name.clone(), size, dir, exe, shortcut_id, provider: "Imported".into(), version: None, installed: now(),
+                installer_dir: None, source_name: None, source_updated: None, needs_repoint: false, moving_to: None, launch_options_fix: None };
+            let mut s = self.saved.lock().unwrap();
+            if s.library.iter().any(|e| e.appid == appid) { continue; }
+            s.library.push(entry);
+            self.save(&s);
+            done.push(name);
+        }
+        done
+    }
+
     pub fn set_steam_self(&self, id: u32) {
         let mut c = self.cfg.lock().unwrap();
         c.steam_self_id = Some(id);

@@ -264,6 +264,7 @@ fn run(mode: &Mode, stop: &Arc<AtomicBool>) {
     let mut tries = 0u32;
     let (mut prev, mut last_front, mut last_scan, mut last_log) = (Pad::default(), Instant::now() - Duration::from_secs(10), Instant::now() - Duration::from_secs(10), Instant::now() - Duration::from_secs(10));
     let mut wheel = 0f32;
+    let mut close_due: Option<Instant> = None;
     let mut held: [Option<Instant>; 4] = [None; 4];
     let mut source = "";
     while !stop.load(Ordering::Relaxed) {
@@ -303,7 +304,15 @@ fn run(mode: &Mode, stop: &Arc<AtomicBool>) {
                 // Browser: B goes back, Y shows the on-screen keyboard, Select (Share/View) closes the browser window.
                 if p.b && !prev.b { send(&[key(VK_MENU, false), key(VK_LEFT, false), key(VK_LEFT, true), key(VK_MENU, true)]); }
                 if p.y && !prev.y { let _ = std::process::Command::new("osk.exe").spawn(); }
-                if p.select && !prev.select { send(&[key(VK_MENU, false), key(VK_F4, false), key(VK_F4, true), key(VK_MENU, true)]); }
+                if p.select && !prev.select {
+                    // Close the browser window; if it is stuck and still there two seconds later, let go of the screen.
+                    for w in mode.windows() { unsafe { PostMessageW(w, WM_CLOSE, 0, 0); } }
+                    close_due = Some(Instant::now() + Duration::from_secs(2));
+                }
+                if let Some(t) = close_due { if Instant::now() >= t {
+                    close_due = None;
+                    for w in mode.windows() { unsafe { SetWindowPos(w, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE); ShowWindow(w, SW_MINIMIZE); } }
+                } }
             }
             if p.rb && !prev.rb { tap(VK_TAB); }
             if p.lb && !prev.lb { send(&[key(VK_SHIFT, false), key(VK_TAB, false), key(VK_TAB, true), key(VK_SHIFT, true)]); }

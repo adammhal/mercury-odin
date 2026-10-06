@@ -372,6 +372,23 @@ async fn art_resolve(State(a): State<App>, Json(r): Json<ResolveReq>) -> R {
     Ok(Json(json!({ "assets": sgdb::resolve(&a.m.http, r.appid, &r.choices).await? })))
 }
 
+#[derive(Deserialize)]
+struct RegItem { appid: u32, name: String, exe: std::path::PathBuf, shortcut_id: u32 }
+#[derive(Deserialize)]
+struct RegBody { games: Vec<RegItem> }
+/// Windows: add already-installed games to Mercury's library.
+async fn register_games(State(a): State<App>, Json(b): Json<RegBody>) -> R {
+    #[cfg(windows)]
+    {
+        let m = a.m.clone();
+        let items = b.games.into_iter().map(|g| (g.appid, g.name, g.exe, g.shortcut_id)).collect();
+        let added = tokio::task::spawn_blocking(move || m.register(items)).await?;
+        Ok(Json(json!({ "added": added })))
+    }
+    #[cfg(not(windows))]
+    { let _ = (a, b); Err(anyhow::anyhow!("only available on Windows").into()) }
+}
+
 /// Windows: start or stop the controller helper for Mercury's own browser window.
 #[cfg(windows)]
 static BROWSER_ASSIST: Mutex<Option<assist::Guard>> = Mutex::new(None);
@@ -502,6 +519,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/open", post(open_url))
         .route("/power/{action}", post(power))
         .route("/launcher/setup", post(launcher_setup))
+        .route("/library/register", post(register_games))
         .route("/assist/browser/{act}", post(assist_browser))
         .route("/sgdb/{appid}/{slot}", get(sgdb_options))
         .route("/art/resolve", post(art_resolve))
