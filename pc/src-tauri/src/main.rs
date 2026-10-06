@@ -33,9 +33,55 @@ fn start_engine() {
     for _ in 0..50 { if engine_up() { break; } std::thread::sleep(Duration::from_millis(100)); }
 }
 
+/// Tells the engine to start or stop the controller helper for the browser window.
+fn browser_assist(action: &str) {
+    use std::io::{Read, Write};
+    if let Ok(mut s) = TcpStream::connect_timeout(&ENGINE.parse::<SocketAddr>().unwrap(), Duration::from_millis(500)) {
+        let _ = write!(s, "POST /assist/browser/{action} HTTP/1.1\r\nHost: 127.0.0.1:47800\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+        let _ = s.set_read_timeout(Some(Duration::from_secs(3)));
+        let _ = s.read(&mut [0u8; 256]);
+    }
+}
+
+/// A full-screen browser for hosts Real-Debrid cannot fetch. The engine's helper drives it with the controller; a finished
+/// download is saved to Downloads, where Mercury's watcher picks it up, and the window closes itself.
+#[tauri::command]
+fn open_browser(app: tauri::AppHandle, url: String) -> Result<(), String> {
+    use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent, webview::DownloadEvent};
+    if !(url.starts_with("https://") || url.starts_with("http://")) { return Err("not a web link".into()); }
+    let parsed: tauri::Url = url.parse().map_err(|_| "bad link".to_string())?;
+    if let Some(w) = app.get_webview_window("browser") { let _ = w.destroy(); }
+    let downloads = std::env::var_os("USERPROFILE").map(|p| PathBuf::from(p).join("Downloads")).unwrap_or_default();
+    let a_dl = app.clone();
+    let win = WebviewWindowBuilder::new(&app, "browser", WebviewUrl::External(parsed))
+        .title("Mercury Browser")
+        .fullscreen(true)
+        .initialization_script(include_str!("browser_hud.js"))
+        .on_download(move |_wv, ev| {
+            match ev {
+                DownloadEvent::Requested { destination, .. } => {
+                    let name = destination.file_name().map(|n| n.to_os_string()).unwrap_or_else(|| "download".into());
+                    *destination = downloads.join(name);
+                }
+                DownloadEvent::Finished { success, .. } => {
+                    let _ = a_dl.emit("browser-download", success);
+                    if success { if let Some(w) = a_dl.get_webview_window("browser") { let _ = w.destroy(); } }
+                }
+                _ => {}
+            }
+            true
+        })
+        .build()
+        .map_err(|e| e.to_string())?;
+    win.on_window_event(|e| { if let WindowEvent::Destroyed = e { browser_assist("stop"); } });
+    browser_assist("start");
+    Ok(())
+}
+
 fn main() {
     start_engine();
     tauri::Builder::default()
+        .invoke_handler(tauri::generate_handler![open_browser])
         .run(tauri::generate_context!())
         .expect("Mercury failed to start");
 }

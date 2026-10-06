@@ -372,6 +372,26 @@ async fn art_resolve(State(a): State<App>, Json(r): Json<ResolveReq>) -> R {
     Ok(Json(json!({ "assets": sgdb::resolve(&a.m.http, r.appid, &r.choices).await? })))
 }
 
+/// Windows: start or stop the controller helper for Mercury's own browser window.
+#[cfg(windows)]
+static BROWSER_ASSIST: Mutex<Option<assist::Guard>> = Mutex::new(None);
+async fn assist_browser(Path(act): Path<String>) -> R {
+    #[cfg(windows)]
+    {
+        let old = BROWSER_ASSIST.lock().unwrap().take();
+        let had = old.is_some();
+        drop(old); // stops a helper that is already running
+        if act == "start" {
+            // The old helper polls for its stop file twice a second; let it see it before a new one clears the file.
+            if had { tokio::time::sleep(std::time::Duration::from_millis(1200)).await; }
+            *BROWSER_ASSIST.lock().unwrap() = Some(assist::spawn(assist::Mode::Browser));
+        }
+        Ok(Json(json!({ "ok": true })))
+    }
+    #[cfg(not(windows))]
+    { let _ = act; Err(anyhow::anyhow!("only available on Windows").into()) }
+}
+
 /// Windows: make sure Steam runs with its debug port open and that Mercury has its own Steam shortcut (with art).
 async fn launcher_setup(State(a): State<App>) -> R {
     #[cfg(windows)]
@@ -440,9 +460,8 @@ async fn main() -> anyhow::Result<()> {
     {
         let args: Vec<String> = std::env::args().collect();
         if let Some(i) = args.iter().position(|a| a == "--assist") {
-            let dir = std::path::PathBuf::from(args.get(i + 1).cloned().unwrap_or_default());
             let parent = args.get(i + 2).and_then(|p| p.parse().ok()).unwrap_or(0);
-            assist::helper_main(dir, parent);
+            assist::helper_main(args.get(i + 1).cloned().unwrap_or_default(), parent);
             return Ok(());
         }
     }
@@ -483,6 +502,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/open", post(open_url))
         .route("/power/{action}", post(power))
         .route("/launcher/setup", post(launcher_setup))
+        .route("/assist/browser/{act}", post(assist_browser))
         .route("/sgdb/{appid}/{slot}", get(sgdb_options))
         .route("/art/resolve", post(art_resolve))
         .with_state(App { m })

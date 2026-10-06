@@ -1,8 +1,8 @@
-// Hosts Real-Debrid cannot fetch: Mercury opens the page in the default browser, Adam presses Download,
+// Hosts Real-Debrid cannot fetch: Mercury opens the page in its own controller-driven browser, Adam presses Download,
 // and Mercury picks the finished file up from %USERPROFILE%\Downloads. Same flow as the Odin's Firefox one.
 import { toaster } from "@decky/api";
 import { api, Source } from "@shared/api";
-import { pc } from "./pcapi";
+import { invoke } from "@tauri-apps/api/core";
 
 type Pending = { appid: number; name: string; source: Source; since: number };
 const KEY = "mercury.pendingBrowserDownload";
@@ -14,7 +14,8 @@ export async function downloadInBrowser(appid: number, name: string, source: Sou
   const url = source.url ?? source.urls?.[0];
   if (!url) throw new Error("This source has no link");
   setPending({ appid, name, source, since: Math.floor(Date.now() / 1000) - 5 });
-  await pc.openUrl(url);
+  // Mercury's own browser window: the controller drives it, and a finished download closes it.
+  await invoke("open_browser", { url });
 }
 export function cancelBrowserDownload() { setPending(undefined); }
 

@@ -1,5 +1,5 @@
-//! Windows: while a repack's installer runs, bring its window to the front and let the controller drive it,
-//! because installer windows are plain mouse-and-keyboard programs.
+//! Windows: while a repack's installer runs (or Mercury's browser window is open), bring its window to the front and let
+//! the controller drive it, because those windows are plain mouse-and-keyboard programs.
 //!   left stick: mouse · A: click · X: space · D-pad: arrow keys (repeat while held) · RB / LB: Tab / Shift+Tab · Start: Enter (Next) · right stick: scroll
 //! Works only on a non-elevated installer (Windows does not let a normal program send input to an elevated window).
 use std::{path::{Path, PathBuf}, sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}}, time::{Duration, Instant}};
@@ -17,33 +17,44 @@ impl Drop for Assist { fn drop(&mut self) { self.0.store(true, Ordering::Relaxed
 
 /// How the helper runs: elevated in its own process (so it can drive installers that restarted themselves as admin),
 /// or inside the engine if that process could not be started.
+/// What the helper is driving: a repack installer (found by its folder) or Mercury's own browser window.
+#[derive(Clone)]
+pub enum Mode { Installer(PathBuf), Browser }
+impl Mode {
+    fn arg(&self) -> String { match self { Mode::Installer(d) => d.display().to_string(), Mode::Browser => "browser".into() } }
+    fn from_arg(a: &str) -> Mode { if a == "browser" { Mode::Browser } else { Mode::Installer(PathBuf::from(a)) } }
+    fn stop_name(&self) -> &'static str { match self { Mode::Installer(_) => "mercury-assist.stop", Mode::Browser => "mercury-assist-browser.stop" } }
+    fn windows(&self) -> Vec<HWND> { match self { Mode::Installer(d) => installer_windows(d), Mode::Browser => browser_windows() } }
+}
+
 pub enum Guard { InProc(Assist), Helper(PathBuf) }
 impl Drop for Guard { fn drop(&mut self) { if let Guard::Helper(p) = self { let _ = std::fs::write(p, b"stop"); } } }
 
-fn stop_file() -> PathBuf { std::env::temp_dir().join("mercury-assist.stop") }
+fn stop_file(m: &Mode) -> PathBuf { std::env::temp_dir().join(m.stop_name()) }
 
 /// Start the elevated helper (`mercuryd.exe --assist <dir> <engine pid>`); fall back to helping from inside the engine.
-pub fn spawn(setup_dir: PathBuf) -> Guard {
-    let stop = stop_file();
+pub fn spawn(mode: Mode) -> Guard {
+    let stop = stop_file(&mode);
     let _ = std::fs::remove_file(&stop);
     if let Ok(exe) = std::env::current_exe() {
         let q = |s: &str| s.replace('\'', "''");
         let script = format!("Start-Process -FilePath '{}' -ArgumentList '--assist','\"{}\"','{}' -Verb RunAs -WindowStyle Hidden",
-            q(&exe.display().to_string()), q(&setup_dir.display().to_string()), std::process::id());
+            q(&exe.display().to_string()), q(&mode.arg()), std::process::id());
         let mut c = std::process::Command::new("powershell");
         c.args(["-NoProfile", "-NonInteractive", "-Command", &script]);
         std::os::windows::process::CommandExt::creation_flags(&mut c, 0x0800_0000);
         if c.spawn().is_ok() { tracing::info!("assist: started the elevated helper"); return Guard::Helper(stop); }
     }
     tracing::warn!("assist: could not start the elevated helper; helping from the engine (cannot drive admin installers)");
-    Guard::InProc(start(setup_dir))
+    Guard::InProc(start(mode))
 }
 
 /// Entry point of the elevated helper process.
-pub fn helper_main(dir: PathBuf, parent: u32) {
+pub fn helper_main(arg: String, parent: u32) {
+    let mode = Mode::from_arg(&arg);
     let stop = Arc::new(AtomicBool::new(false));
     let s = stop.clone();
-    let file = stop_file();
+    let file = stop_file(&mode);
     std::thread::spawn(move || loop {
         let alive = unsafe {
             let h = OpenProcess(0x0010_0000 /* SYNCHRONIZE */, 0, parent);
@@ -54,14 +65,14 @@ pub fn helper_main(dir: PathBuf, parent: u32) {
         if file.exists() || !alive { s.store(true, Ordering::Relaxed); break; }
         std::thread::sleep(Duration::from_millis(500));
     });
-    run(&dir, &stop);
+    run(&mode, &stop);
 }
 
 /// Start helping with the installer whose files are in `setup_dir`. Stops when the returned guard is dropped.
-pub fn start(setup_dir: PathBuf) -> Assist {
+pub fn start(mode: Mode) -> Assist {
     let stop = Arc::new(AtomicBool::new(false));
     let s = stop.clone();
-    std::thread::spawn(move || run(&setup_dir, &s));
+    std::thread::spawn(move || run(&mode, &s));
     Assist(stop)
 }
 
@@ -93,6 +104,16 @@ unsafe extern "system" fn collect(h: HWND, lp: LPARAM) -> BOOL {
         }
     }
     1
+}
+
+fn browser_windows() -> Vec<HWND> {
+    let mut all: Vec<(HWND, u32)> = vec![];
+    unsafe { EnumWindows(Some(collect), &mut all as *mut _ as LPARAM); }
+    all.into_iter().map(|(h, _)| h).filter(|&h| unsafe {
+        let mut buf = [0u16; 64];
+        let n = GetWindowTextW(h, buf.as_mut_ptr(), 64);
+        n > 0 && String::from_utf16_lossy(&buf[..n as usize]) == "Mercury Browser"
+    }).collect()
 }
 
 fn installer_windows(setup_dir: &Path) -> Vec<HWND> {
@@ -134,7 +155,7 @@ fn tap(vk: u16) { send(&[key(vk, false), key(vk, true)]); }
 
 /// One controller reading, whichever way it was obtained.
 #[derive(Default, Clone, Copy)]
-struct Pad { lx: f32, ly: f32, ry: f32, a: bool, x: bool, start: bool, up: bool, down: bool, left: bool, right: bool, lb: bool, rb: bool }
+struct Pad { lx: f32, ly: f32, ry: f32, a: bool, b: bool, x: bool, y: bool, start: bool, select: bool, up: bool, down: bool, left: bool, right: bool, lb: bool, rb: bool }
 
 // ---- HID: Apollo emulates a DualShock 4 (not an Xbox pad), which XInput cannot see ----
 struct Hid { latest: Arc<Mutex<Option<(u16, Vec<u8>)>>>, handles: Vec<usize> }
@@ -216,7 +237,7 @@ fn parse_sony(pid: u16, d: &[u8]) -> Option<Pad> {
     let dual_sense = matches!(pid, 0x0CE6 | 0x0DF2);
     let (b1, b2) = if dual_sense { (*d.get(8)?, *d.get(9)?) } else { (*d.get(5)?, *d.get(6)?) };
     let hat = b1 & 0x0F;
-    Some(Pad { lx: stick(d[1]), ly: -stick(d[2]), ry: -stick(*d.get(4)?), a: b1 & 0x20 != 0, x: b1 & 0x10 != 0, start: b2 & 0x20 != 0,
+    Some(Pad { lx: stick(d[1]), ly: -stick(d[2]), ry: -stick(*d.get(4)?), a: b1 & 0x20 != 0, b: b1 & 0x40 != 0, x: b1 & 0x10 != 0, y: b1 & 0x80 != 0, start: b2 & 0x20 != 0, select: b2 & 0x10 != 0,
         up: matches!(hat, 7 | 0 | 1), down: matches!(hat, 3 | 4 | 5), left: matches!(hat, 5 | 6 | 7), right: matches!(hat, 1 | 2 | 3), lb: b2 & 0x01 != 0, rb: b2 & 0x02 != 0 })
 }
 
@@ -224,8 +245,8 @@ fn xinput_pad() -> Option<Pad> {
     let mut st: XINPUT_STATE = unsafe { std::mem::zeroed() };
     (0..4).find(|&i| unsafe { XInputGetState(i, &mut st) } == 0)?;
     let g = st.Gamepad; let b = g.wButtons;
-    Some(Pad { lx: axis(g.sThumbLX), ly: axis(g.sThumbLY), ry: axis(g.sThumbRY), a: b & XINPUT_GAMEPAD_A != 0, x: b & XINPUT_GAMEPAD_X != 0,
-        start: b & XINPUT_GAMEPAD_START != 0, up: b & XINPUT_GAMEPAD_DPAD_UP != 0, down: b & XINPUT_GAMEPAD_DPAD_DOWN != 0,
+    Some(Pad { lx: axis(g.sThumbLX), ly: axis(g.sThumbLY), ry: axis(g.sThumbRY), a: b & XINPUT_GAMEPAD_A != 0, b: b & XINPUT_GAMEPAD_B != 0, x: b & XINPUT_GAMEPAD_X != 0, y: b & XINPUT_GAMEPAD_Y != 0,
+        start: b & XINPUT_GAMEPAD_START != 0, select: b & XINPUT_GAMEPAD_BACK != 0, up: b & XINPUT_GAMEPAD_DPAD_UP != 0, down: b & XINPUT_GAMEPAD_DPAD_DOWN != 0,
         left: b & XINPUT_GAMEPAD_DPAD_LEFT != 0, right: b & XINPUT_GAMEPAD_DPAD_RIGHT != 0,
         lb: b & XINPUT_GAMEPAD_LEFT_SHOULDER != 0, rb: b & XINPUT_GAMEPAD_RIGHT_SHOULDER != 0 })
 }
@@ -236,8 +257,9 @@ fn axis(v: i16) -> f32 {
     if v.abs() < DEAD { 0.0 } else { ((v.abs() - DEAD) / (32767.0 - DEAD)) * v.signum() }
 }
 
-fn run(setup_dir: &Path, stop: &Arc<AtomicBool>) {
-    tracing::info!("assist: started for {}", setup_dir.display());
+fn run(mode: &Mode, stop: &Arc<AtomicBool>) {
+    tracing::info!("assist: started ({})", mode.arg());
+    let browser = matches!(mode, Mode::Browser);
     let hid = start_hid(stop.clone());
     let mut tries = 0u32;
     let (mut prev, mut last_front, mut last_scan, mut last_log) = (Pad::default(), Instant::now() - Duration::from_secs(10), Instant::now() - Duration::from_secs(10), Instant::now() - Duration::from_secs(10));
@@ -247,7 +269,7 @@ fn run(setup_dir: &Path, stop: &Arc<AtomicBool>) {
     while !stop.load(Ordering::Relaxed) {
         if last_scan.elapsed() > Duration::from_millis(700) {
             last_scan = Instant::now();
-            let wins = installer_windows(setup_dir);
+            let wins = mode.windows();
             let fg = unsafe { GetForegroundWindow() };
             if wins.is_empty() && last_log.elapsed() > Duration::from_secs(5) { last_log = Instant::now(); tracing::info!("assist: no installer window yet"); }
             // Keep the installer on top, but not more than every few seconds so the user can still switch away.
@@ -277,6 +299,12 @@ fn run(setup_dir: &Path, stop: &Arc<AtomicBool>) {
             if !p.a && prev.a { send(&[mouse(MOUSEEVENTF_LEFTUP, 0)]); }
             if p.x && !prev.x { tap(VK_SPACE); }
             if p.start && !prev.start { tap(VK_RETURN); }
+            if browser {
+                // Browser: B goes back, Y shows the on-screen keyboard, Select (Share/View) closes the browser window.
+                if p.b && !prev.b { send(&[key(VK_MENU, false), key(VK_LEFT, false), key(VK_LEFT, true), key(VK_MENU, true)]); }
+                if p.y && !prev.y { let _ = std::process::Command::new("osk.exe").spawn(); }
+                if p.select && !prev.select { send(&[key(VK_MENU, false), key(VK_F4, false), key(VK_F4, true), key(VK_MENU, true)]); }
+            }
             if p.rb && !prev.rb { tap(VK_TAB); }
             if p.lb && !prev.lb { send(&[key(VK_SHIFT, false), key(VK_TAB, false), key(VK_TAB, true), key(VK_SHIFT, true)]); }
             // D-pad: arrow keys, repeating while held (after a short delay, like a keyboard).
@@ -292,6 +320,6 @@ fn run(setup_dir: &Path, stop: &Arc<AtomicBool>) {
     // Closing the handles ends the reader threads.
     for h in hid.handles { unsafe { CloseHandle(h as _); } }
     // Release the always-on-top flag so a finished installer does not stay above everything.
-    for w in installer_windows(setup_dir) { unsafe { SetWindowPos(w, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE); } }
+    for w in mode.windows() { unsafe { SetWindowPos(w, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE); } }
     tracing::info!("assist: stopped");
 }

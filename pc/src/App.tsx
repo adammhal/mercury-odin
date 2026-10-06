@@ -3,6 +3,7 @@ import { HashRouter, Navigate, Route, Routes, useLocation, useNavigate } from "r
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { ConfirmModal, Focusable, ModalHost, Navigation, setNavigate, showModal, ToastHost, toast } from "./shim/ui";
 import { focusFirst, press, setGlobalHandlers } from "./shim/nav";
+import { btn, PS_COLOR, usePadKind } from "./shim/pad";
 import { api, Job, STATE_LABEL } from "@shared/api";
 import { usePoll } from "@shared/hooks";
 import { FOCUS } from "@shared/ui";
@@ -68,8 +69,10 @@ function Clock() {
 }
 
 function Glyph({ k, label, onClick }: { k: string; label: string; onClick?: () => void }) {
+  const kind = usePadKind();
+  const ps = kind === "ps" && PS_COLOR[k];
   return <span onClick={onClick} style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: onClick ? "pointer" : undefined }}>
-    <span style={{ minWidth: 18, height: 18, padding: "0 4px", boxSizing: "border-box", borderRadius: 9, background: "#e9ecef", color: "#0e141b", fontSize: 10, fontWeight: 800, display: "inline-flex", alignItems: "center", justifyContent: "center" }}>{k}</span>
+    <span style={{ minWidth: 18, height: 18, padding: "0 4px", boxSizing: "border-box", borderRadius: 9, background: ps ? "#1c2430" : "#e9ecef", color: ps || "#0e141b", border: ps ? `1.5px solid ${ps}` : undefined, fontSize: ps ? 11 : 10, fontWeight: 800, display: "inline-flex", alignItems: "center", justifyContent: "center" }}>{btn(k, kind)}</span>
     <span>{label}</span>
   </span>;
 }
