@@ -1,6 +1,6 @@
 //! Windows: while a repack's installer runs, bring its window to the front and let the controller drive it,
 //! because installer windows are plain mouse-and-keyboard programs.
-//!   left stick: mouse · A: click · X: space · D-pad down/up: Tab / Shift+Tab · Start: Enter (Next) · right stick: scroll
+//!   left stick: mouse · A: click · X: space · D-pad: arrow keys (repeat while held) · Start: Enter (Next) · right stick: scroll
 //! Works only on a non-elevated installer (Windows does not let a normal program send input to an elevated window).
 use std::{path::{Path, PathBuf}, sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}}, time::{Duration, Instant}};
 use windows_sys::Win32::{
@@ -126,7 +126,7 @@ fn tap(vk: u16) { send(&[key(vk, false), key(vk, true)]); }
 
 /// One controller reading, whichever way it was obtained.
 #[derive(Default, Clone, Copy)]
-struct Pad { lx: f32, ly: f32, ry: f32, a: bool, x: bool, start: bool, up: bool, down: bool }
+struct Pad { lx: f32, ly: f32, ry: f32, a: bool, x: bool, start: bool, up: bool, down: bool, left: bool, right: bool }
 
 // ---- HID: Apollo emulates a DualShock 4 (not an Xbox pad), which XInput cannot see ----
 struct Hid { latest: Arc<Mutex<Option<(u16, Vec<u8>)>>>, handles: Vec<usize> }
@@ -209,7 +209,7 @@ fn parse_sony(pid: u16, d: &[u8]) -> Option<Pad> {
     let (b1, b2) = if dual_sense { (*d.get(8)?, *d.get(9)?) } else { (*d.get(5)?, *d.get(6)?) };
     let hat = b1 & 0x0F;
     Some(Pad { lx: stick(d[1]), ly: -stick(d[2]), ry: -stick(*d.get(4)?), a: b1 & 0x20 != 0, x: b1 & 0x10 != 0, start: b2 & 0x20 != 0,
-        up: matches!(hat, 7 | 0 | 1), down: matches!(hat, 3 | 4 | 5) })
+        up: matches!(hat, 7 | 0 | 1), down: matches!(hat, 3 | 4 | 5), left: matches!(hat, 5 | 6 | 7), right: matches!(hat, 1 | 2 | 3) })
 }
 
 fn xinput_pad() -> Option<Pad> {
@@ -217,7 +217,8 @@ fn xinput_pad() -> Option<Pad> {
     (0..4).find(|&i| unsafe { XInputGetState(i, &mut st) } == 0)?;
     let g = st.Gamepad; let b = g.wButtons;
     Some(Pad { lx: axis(g.sThumbLX), ly: axis(g.sThumbLY), ry: axis(g.sThumbRY), a: b & XINPUT_GAMEPAD_A != 0, x: b & XINPUT_GAMEPAD_X != 0,
-        start: b & XINPUT_GAMEPAD_START != 0, up: b & XINPUT_GAMEPAD_DPAD_UP != 0, down: b & XINPUT_GAMEPAD_DPAD_DOWN != 0 })
+        start: b & XINPUT_GAMEPAD_START != 0, up: b & XINPUT_GAMEPAD_DPAD_UP != 0, down: b & XINPUT_GAMEPAD_DPAD_DOWN != 0,
+        left: b & XINPUT_GAMEPAD_DPAD_LEFT != 0, right: b & XINPUT_GAMEPAD_DPAD_RIGHT != 0 })
 }
 
 const DEAD: f32 = 7849.0;
@@ -231,6 +232,7 @@ fn run(setup_dir: &Path, stop: &Arc<AtomicBool>) {
     let hid = start_hid(stop.clone());
     let (mut prev, mut last_front, mut last_scan, mut last_log) = (Pad::default(), Instant::now() - Duration::from_secs(10), Instant::now() - Duration::from_secs(10), Instant::now() - Duration::from_secs(10));
     let mut wheel = 0f32;
+    let mut held: [Option<Instant>; 4] = [None; 4];
     let mut source = "";
     while !stop.load(Ordering::Relaxed) {
         if last_scan.elapsed() > Duration::from_millis(700) {
@@ -262,8 +264,12 @@ fn run(setup_dir: &Path, stop: &Arc<AtomicBool>) {
             if !p.a && prev.a { send(&[mouse(MOUSEEVENTF_LEFTUP, 0)]); }
             if p.x && !prev.x { tap(VK_SPACE); }
             if p.start && !prev.start { tap(VK_RETURN); }
-            if p.down && !prev.down { tap(VK_TAB); }
-            if p.up && !prev.up { send(&[key(VK_SHIFT, false), key(VK_TAB, false), key(VK_TAB, true), key(VK_SHIFT, true)]); }
+            // D-pad: arrow keys, repeating while held (after a short delay, like a keyboard).
+            for (down, was, vk, i) in [(p.up, prev.up, VK_UP, 0), (p.down, prev.down, VK_DOWN, 1), (p.left, prev.left, VK_LEFT, 2), (p.right, prev.right, VK_RIGHT, 3)] {
+                if !down { held[i] = None; continue; }
+                if !was { tap(vk); held[i] = Some(Instant::now() + Duration::from_millis(400)); }
+                else if let Some(due) = held[i] { if Instant::now() >= due { tap(vk); held[i] = Some(Instant::now() + Duration::from_millis(90)); } }
+            }
             prev = p;
         }
         std::thread::sleep(Duration::from_millis(16));

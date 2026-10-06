@@ -54,7 +54,7 @@ export function Downloads() {
               <div style={{ flex: 1, minWidth: 0 }}>
                 <JobProgress job={j} />
                 {j.state === "needs_setup" && <div style={{ fontSize: 12, color: C.warn, marginTop: 4 }}>Repack downloaded. Run its installer, accept the admin prompt, keep the folder it shows, and click through. Mercury adds the game to Steam when it closes.</div>}
-                {j.state === "installing" && <div style={{ fontSize: 12, color: C.dim, marginTop: 4 }}>Installer running. It should be in front: left stick moves the mouse, A clicks, Start presses Next, X is Space, D-pad up/down is Tab.</div>}
+                {j.state === "installing" && <div style={{ fontSize: 12, color: C.dim, marginTop: 4 }}>Installer running. It should be in front: left stick moves the mouse, A clicks, Start presses Next, X is Space, the D-pad sends the arrow keys.</div>}
                 <div style={{ fontSize: 12, color: C.dim, marginTop: 4 }}>{j.source.provider} · {j.source.name}</div>
               </div>
               <Actions job={j} reload={reload} />
