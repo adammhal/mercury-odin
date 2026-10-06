@@ -6,15 +6,15 @@ import { usePoll } from "../hooks";
 import { confirmReview } from "../review";
 import { Btn, C, FOCUS, FocusStyle, page, scrollIntoView } from "../ui";
 
-type Slot = { slot: number; label: string; file: Parameters<typeof cdn>[1]; w: number; h: number; fit: "cover" | "contain" };
-const SLOTS: Slot[] = [
+export type Slot = { slot: number; label: string; file: Parameters<typeof cdn>[1]; w: number; h: number; fit: "cover" | "contain" };
+export const SLOTS: Slot[] = [
   { slot: 0, label: "Cover", file: "library_600x900.jpg", w: 104, h: 156, fit: "cover" },
   { slot: 1, label: "Hero", file: "library_hero.jpg", w: 252, h: 82, fit: "cover" },
   { slot: 2, label: "Logo", file: "logo.png", w: 150, h: 82, fit: "contain" },
   { slot: 3, label: "Wide", file: "header.jpg", w: 176, h: 82, fit: "cover" },
 ];
 
-function Art({ src, s, tile }: { src: string; s: Slot; tile?: { w: number; h: number } }) {
+export function Art({ src, s, tile }: { src: string; s: Slot; tile?: { w: number; h: number } }) {
   const [bad, setBad] = useState(false);
   const w = tile?.w ?? s.w, h = tile?.h ?? s.h;
   useEffect(() => setBad(false), [src]);
@@ -25,7 +25,7 @@ function Art({ src, s, tile }: { src: string; s: Slot; tile?: { w: number; h: nu
 }
 
 /** Choose one SteamGridDB image for a slot. The first tile keeps Steam's own store art. */
-function ArtPicker({ appid, s, onPick, closeModal }: { appid: number; s: Slot; onPick: (o: SgdbOpt | null) => void; closeModal?: () => void }) {
+export function ArtPicker({ appid, s, onPick, closeModal }: { appid: number; s: Slot; onPick: (o: SgdbOpt | null) => void; closeModal?: () => void }) {
   const [opts, setOpts] = useState<SgdbOpt[]>();
   const [err, setErr] = useState<string>();
   useEffect(() => { api.sgdb(appid, s.slot).then((r) => setOpts(r.options), (e) => setErr(e.message)); }, []);

@@ -473,6 +473,13 @@ impl Manager {
         done
     }
 
+    /// Windows: the title was changed from the artwork editor.
+    #[cfg(windows)]
+    pub fn rename_library(&self, appid: u32, name: &str) {
+        let mut s = self.saved.lock().unwrap();
+        if let Some(e) = s.library.iter_mut().find(|e| e.appid == appid) { e.name = name.to_string(); self.save(&s); }
+    }
+
     pub fn set_steam_self(&self, id: u32) {
         let mut c = self.cfg.lock().unwrap();
         c.steam_self_id = Some(id);

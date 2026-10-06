@@ -376,6 +376,37 @@ async fn art_resolve(State(a): State<App>, Json(r): Json<ResolveReq>) -> R {
 struct RegItem { appid: u32, name: String, exe: std::path::PathBuf, shortcut_id: u32 }
 #[derive(Deserialize)]
 struct RegBody { games: Vec<RegItem> }
+#[derive(Deserialize)]
+struct EditArtBody { #[serde(default)] name: Option<String>, #[serde(default)] art: std::collections::HashMap<String, String> }
+/// Windows: change the title and artwork of an installed game's Steam shortcut. Only the slots sent are replaced.
+async fn edit_art(State(a): State<App>, Path(appid): Path<u32>, Json(b): Json<EditArtBody>) -> R {
+    #[cfg(windows)]
+    {
+        let e = a.m.library().into_iter().find(|e| e.appid == appid).ok_or_else(|| anyhow::anyhow!("not installed"))?;
+        if e.shortcut_id == 0 { return Err(anyhow::anyhow!("{} is not in Steam yet", e.name).into()); }
+        let name = b.name.as_deref().map(str::trim).filter(|n| !n.is_empty() && *n != e.name);
+        let assets = sgdb::chosen(&a.m.http, appid, &b.art).await?;
+        if name.is_none() && assets.is_empty() { return Ok(Json(json!({ "ok": true, "changed": false }))); }
+        steamwin::update_shortcut(&a.m.http, e.shortcut_id, name, &assets).await?;
+        if let Some(n) = name { a.m.rename_library(appid, n); }
+        Ok(Json(json!({ "ok": true, "changed": true })))
+    }
+    #[cfg(not(windows))]
+    { let _ = (a, appid, b); Err(anyhow::anyhow!("only available on Windows").into()) }
+}
+
+/// Windows: the artwork Steam shows now for a shortcut (so the editor can show what is wrong).
+async fn grid_art(Path((shortcut, slot)): Path<(u32, u8)>) -> axum::response::Response {
+    #[cfg(windows)]
+    if let Some((p, ct)) = steamwin::grid_file(shortcut, slot) {
+        if let Ok(bytes) = tokio::fs::read(&p).await {
+            return ([(axum::http::header::CONTENT_TYPE, ct), (axum::http::header::CACHE_CONTROL, "no-store")], bytes).into_response();
+        }
+    }
+    let _ = (shortcut, slot);
+    StatusCode::NOT_FOUND.into_response()
+}
+
 /// Windows: add already-installed games to Mercury's library.
 async fn register_games(State(a): State<App>, Json(b): Json<RegBody>) -> R {
     #[cfg(windows)]
@@ -522,6 +553,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/power/{action}", post(power))
         .route("/launcher/setup", post(launcher_setup))
         .route("/library/register", post(register_games))
+        .route("/library/{appid}/art", post(edit_art))
+        .route("/steam/grid/{shortcut}/{slot}", get(grid_art))
         .route("/assist/browser/{act}", post(assist_browser))
         .route("/sgdb/{appid}/{slot}", get(sgdb_options))
         .route("/art/resolve", post(art_resolve))

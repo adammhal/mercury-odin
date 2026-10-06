@@ -56,6 +56,7 @@ export const api = {
   app: (id: number) => req<App>(`/steam/app/${id}`),
   art: (id: number) => req<{ assets: [number, string, string][]; icon?: string | null }>(`/steam/art/${id}`),
   sgdb: (appid: number, slot: number) => req<{ options: SgdbOpt[] }>(`/sgdb/${appid}/${slot}`),
+  editArt: (appid: number, body: { name?: string; art: Record<string, string> }) => req<{ ok: boolean; changed: boolean }>(`/library/${appid}/art`, "POST", body),
   resolveArt: (appid: number, choices: Record<string, string>) => req<{ assets: [number, string, string][] }>("/art/resolve", "POST", { appid, choices }),
   sources: (name: string, refresh = false) =>
     req<{ sources: Source[]; installed_estimate: number[]; errors: string[] }>(`/sources?name=${encodeURIComponent(name)}${refresh ? "&refresh=true" : ""}`),
@@ -84,6 +85,9 @@ export const api = {
   installerFiles: (appid: number) => req<{ dir: string; size: number } | null>(`/library/${appid}/installer-files`),
   deleteInstallerFiles: (appid: number) => req<{ freed: number }>(`/library/${appid}/installer-files`, "DELETE"),
 };
+
+/** The artwork Steam currently shows for a shortcut (PC engine). */
+export const gridArt = (shortcut: number, slot: number, stamp: number) => `${BASE}/steam/grid/${shortcut}/${slot}?t=${stamp}`;
 
 export const cdn = (id: number, f: "library_600x900.jpg" | "library_hero.jpg" | "logo.png" | "header.jpg") =>
   `https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/${id}/${f}`;

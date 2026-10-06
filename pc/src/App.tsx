@@ -14,6 +14,7 @@ import { Game } from "./pages/Game";
 import { Downloads } from "./pages/Downloads";
 import { Library } from "./pages/Library";
 import { Settings } from "./pages/Settings";
+import { EditArt } from "./pages/EditArt";
 import { Review } from "@shared/pages/Review";
 import { checkBrowserDownload } from "./browser";
 import { pc } from "./pcapi";
@@ -146,6 +147,7 @@ function Shell() {
           <Route path="/mercury/search" element={<Search />} />
           <Route path="/mercury/settings" element={<Settings />} />
           <Route path="/mercury/review/:id" element={<Review />} />
+          <Route path="/mercury/edit-art/:appid" element={<EditArt />} />
           <Route path="*" element={<Navigate to="/mercury" replace />} />
         </Routes>
 

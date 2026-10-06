@@ -125,3 +125,32 @@ pub async fn remove_shortcut(http: &reqwest::Client, id: u32) -> Result<()> {
     eval(http, &format!("SteamClient.Apps.RemoveShortcut({id})")).await?;
     Ok(())
 }
+
+/// Change the title and/or artwork of a shortcut that is already in Steam. `art` = (slot, ext, base64).
+pub async fn update_shortcut(http: &reqwest::Client, id: u32, name: Option<&str>, art: &[(u8, String, String)]) -> Result<()> {
+    ensure_ready(http).await?;
+    let rename = name.map(|n| format!("SteamClient.Apps.SetShortcutName(id, {});", json!(n))).unwrap_or_default();
+    let js = format!(r#"(async () => {{
+        const id = {id};
+        {rename}
+        for (const [t, ext, data] of {a}) await SteamClient.Apps.SetCustomArtworkForApp(id, data, ext, t);
+        return true;
+    }})()"#, a = json!(art));
+    eval(http, &js).await?;
+    Ok(())
+}
+
+/// The artwork Steam currently shows for a shortcut: its file in the user's grid folder.
+pub fn grid_file(shortcut_id: u32, slot: u8) -> Option<(PathBuf, &'static str)> {
+    let user = crate::steam::steam_id64()? - 76561197960265728;
+    let dir = steam_dir()?.join("userdata").join(user.to_string()).join("config").join("grid");
+    let names: [String; 4] = match slot {
+        0 => [format!("{shortcut_id}p.jpg"), format!("{shortcut_id}p.png"), String::new(), String::new()],
+        1 => [format!("{shortcut_id}_hero.jpg"), format!("{shortcut_id}_hero.png"), String::new(), String::new()],
+        2 => [format!("{shortcut_id}_logo.png"), format!("{shortcut_id}_logo.jpg"), String::new(), String::new()],
+        3 => [format!("{shortcut_id}.jpg"), format!("{shortcut_id}.png"), String::new(), String::new()],
+        _ => return None,
+    };
+    names.iter().filter(|n| !n.is_empty()).map(|n| dir.join(n)).find(|p| p.is_file())
+        .map(|p| { let t = if p.extension().is_some_and(|e| e == "png") { "image/png" } else { "image/jpeg" }; (p, t) })
+}

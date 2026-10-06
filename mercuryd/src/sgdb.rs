@@ -73,3 +73,38 @@ pub async fn resolve(http: &reqwest::Client, appid: u32, choices: &HashMap<Strin
     }
     Ok(assets)
 }
+
+/// Download one chosen image: (extension, base64).
+async fn download(http: &reqwest::Client, url: &str) -> Result<(String, String)> {
+    if !allowed(url) { bail!("that image is not from SteamGridDB"); }
+    let r = http.get(url).timeout(std::time::Duration::from_secs(30)).send().await?;
+    if !r.status().is_success() { bail!("could not download the chosen image ({})", r.status()); }
+    let ext = match r.headers().get("content-type").and_then(|v| v.to_str().ok()).unwrap_or("") {
+        t if t.contains("png") => "png", t if t.contains("webp") => "webp", t if t.contains("gif") => "gif", _ => "jpg",
+    }.to_string();
+    Ok((ext, base64::engine::general_purpose::STANDARD.encode(r.bytes().await?)))
+}
+
+/// Only the slots the user changed. A value of "default" means Steam's own store art for that slot.
+pub async fn chosen(http: &reqwest::Client, appid: u32, choices: &HashMap<String, String>) -> Result<Vec<(u8, String, String)>> {
+    let mut out = vec![];
+    let mut store: Option<Vec<(u8, String, String)>> = None;
+    for (slot, url) in choices {
+        let slot: u8 = slot.parse().map_err(|_| anyhow!("bad art slot"))?;
+        if url.is_empty() { continue; }
+        if url == "default" {
+            if store.is_none() {
+                let key = crate::config::Config::load().sgdb_key;
+                store = Some(crate::steam::art(http, appid, &key).await.assets);
+            }
+            match store.as_ref().and_then(|s| s.iter().find(|a| a.0 == slot)) {
+                Some(a) => out.push(a.clone()),
+                None => bail!("Steam has no store art for that slot"),
+            }
+        } else {
+            let (ext, b64) = download(http, url).await?;
+            out.push((slot, ext, b64));
+        }
+    }
+    Ok(out)
+}
