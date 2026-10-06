@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useState } from "react";
 import { HashRouter, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { listen } from "@tauri-apps/api/event";
 import { ConfirmModal, Focusable, ModalHost, Navigation, setNavigate, showModal, ToastHost, toast } from "./shim/ui";
 import { focusFirst, press, setGlobalHandlers } from "./shim/nav";
 import { btn, PS_COLOR, usePadKind } from "./shim/pad";
@@ -99,6 +100,17 @@ function useWatcher() {
   }, []);
 }
 
+/** The browser window reports its downloads: it hides itself when one starts and closes when the last one ends. */
+function useBrowserEvents() {
+  useEffect(() => {
+    const p = listen<string>("browser-download", (e) => {
+      if (e.payload === "started") toast("Download started in the background. Mercury installs it when it finishes.", "Mercury");
+      if (e.payload === "failed") toast("A browser download failed. Try again from the game page.", "Mercury");
+    });
+    return () => { p.then((off) => off()); };
+  }, []);
+}
+
 function Shell() {
   const navigate = useNavigate();
   const loc = useLocation();
@@ -106,6 +118,7 @@ function Shell() {
   const [jobs] = usePoll(api.jobs, 3000);
   const active = (jobs ?? []).filter((j) => !["done", "failed", "cancelled"].includes(j.state));
   useWatcher();
+  useBrowserEvents();
   useLayoutEffect(() => { setNavigate((to) => navigate(to)); }, [navigate]);
   const home = loc.pathname === "/mercury";
   useEffect(() => {

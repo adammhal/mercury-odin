@@ -33,6 +33,9 @@ fn start_engine() {
     for _ in 0..50 { if engine_up() { break; } std::thread::sleep(Duration::from_millis(100)); }
 }
 
+/// Downloads the browser window has started and not yet finished: (url, file name).
+static ACTIVE: std::sync::Mutex<Vec<(String, String)>> = std::sync::Mutex::new(Vec::new());
+
 /// Tells the engine to start or stop the controller helper for the browser window.
 fn browser_assist(action: &str) {
     use std::io::{Read, Write};
@@ -60,13 +63,22 @@ async fn open_browser(app: tauri::AppHandle, url: String) -> Result<(), String> 
         .initialization_script(include_str!("browser_hud.js"))
         .on_download(move |_wv, ev| {
             match ev {
-                DownloadEvent::Requested { destination, .. } => {
+                DownloadEvent::Requested { url, destination } => {
                     let name = destination.file_name().map(|n| n.to_os_string()).unwrap_or_else(|| "download".into());
+                    // The same file twice (a page that starts it again, or a second click) is refused.
+                    let key = name.to_string_lossy().to_string();
+                    { let mut act = ACTIVE.lock().unwrap(); if act.iter().any(|(_, k)| *k == key) { return false; } act.push((url.to_string(), key)); }
                     *destination = downloads.join(name);
+                    // The download carries on while the window is hidden (closing it would cancel it). Hand the screen back to Mercury.
+                    if let Some(w) = a_dl.get_webview_window("browser") { let _ = w.hide(); }
+                    if let Some(m) = a_dl.get_webview_window("main") { let _ = m.set_focus(); }
+                    std::thread::spawn(|| browser_assist("stop"));
+                    let _ = a_dl.emit("browser-download", "started");
                 }
-                DownloadEvent::Finished { success, .. } => {
-                    let _ = a_dl.emit("browser-download", success);
-                    if success { if let Some(w) = a_dl.get_webview_window("browser") { let _ = w.destroy(); } }
+                DownloadEvent::Finished { url, success, .. } => {
+                    let left = { let mut act = ACTIVE.lock().unwrap(); act.retain(|(u, _)| *u != url.to_string()); act.len() };
+                    let _ = a_dl.emit("browser-download", if success { "finished" } else { "failed" });
+                    if left == 0 { if let Some(w) = a_dl.get_webview_window("browser") { let _ = w.destroy(); } }
                 }
                 _ => {}
             }
