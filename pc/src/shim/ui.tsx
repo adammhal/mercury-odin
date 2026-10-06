@@ -2,6 +2,7 @@
 import { cloneElement, CSSProperties, forwardRef, ReactElement, ReactNode, useEffect, useImperativeHandle, useRef, useState, useSyncExternalStore } from "react";
 import { useParams as useRouterParams } from "react-router-dom";
 import { current, focusFirst } from "./nav";
+import { btn, usePadKind } from "./pad";
 
 const C = { panel: "#1f242c", panel2: "#2a303a", text: "#dcdedf", dim: "#8b929a", accent: "#1a9fff" };
 export const FOCUS_CLASS = "mercury-focus";
@@ -217,11 +218,35 @@ const ROWS = ["1234567890", "qwertyuiop", "asdfghjkl'", "zxcvbnm-.:"];
 function Keyboard({ initial, password, onChange, closeModal }: { initial: string; password?: boolean; onChange: (v: string) => void; closeModal?: () => void }) {
   const [v, setV] = useState(initial);
   const [shift, setShift] = useState(false);
+  const kind = usePadKind();
+  const root = useRef<HTMLDivElement>(null);
   const set = (n: string) => { setV(n); onChange(n); };
-  const key = (label: ReactNode, fn: () => void, w = 1, autoFocus = false) =>
-    <Focusable key={String(label)} autoFocus={autoFocus} onActivate={fn} style={{ flex: w, height: 38, borderRadius: 4, background: C.panel2, color: "#fff", fontSize: 15, display: "flex", alignItems: "center", justifyContent: "center" }}>{label}</Focusable>;
+  // Controller shortcuts: X backspace, Y space, LB shift, Start done (A types the highlighted key, B closes).
+  const live = useRef({ v, shift });
+  live.current = { v, shift };
+  useEffect(() => {
+    const modal = root.current?.closest("[data-modal]");
+    if (!modal) return;
+    const on = (e: Event) => {
+      const b = (e as CustomEvent<string>).detail;
+      const { v: cur, shift: sh } = live.current;
+      if (b === "x") set(cur.slice(0, -1));
+      else if (b === "y") set(cur + " ");
+      else if (b === "lb") setShift(!sh);
+      else if (b === "start") closeModal?.();
+      else return;
+      e.preventDefault();
+    };
+    modal.addEventListener("mercury-button", on);
+    return () => modal.removeEventListener("mercury-button", on);
+  }, []);
+  const hint = (b: string) => <span style={{ marginLeft: 6, minWidth: 16, height: 16, padding: "0 4px", boxSizing: "border-box", borderRadius: 8, border: "1px solid rgba(255,255,255,.55)", fontSize: 10, fontWeight: 800, display: "inline-flex", alignItems: "center", justifyContent: "center", opacity: 0.85 }}>{b}</span>;
+  const key = (label: string, fn: () => void, w = 1, autoFocus = false, hintBtn?: string) =>
+    <Focusable key={label} autoFocus={autoFocus} onActivate={fn} style={{ flex: w, height: 38, borderRadius: 4, background: C.panel2, color: "#fff", fontSize: 15, display: "flex", alignItems: "center", justifyContent: "center" }}>
+      {label}{hintBtn && hint(btn(hintBtn, kind))}
+    </Focusable>;
   return (
-    <div style={{ width: 640, background: "#171d25", borderRadius: 6, padding: 14 }}>
+    <div ref={root} style={{ width: 640, background: "#171d25", borderRadius: 6, padding: 14 }}>
       <div style={{ height: 38, borderRadius: 4, background: "#0e141b", padding: "0 12px", display: "flex", alignItems: "center", fontSize: 16, color: "#fff", marginBottom: 10, overflow: "hidden", whiteSpace: "nowrap" }}>
         {password ? "•".repeat(v.length) : v}<span style={{ opacity: 0.6 }}>▏</span>
       </div>
@@ -231,12 +256,13 @@ function Keyboard({ initial, password, onChange, closeModal }: { initial: string
         </div>
       ))}
       <div style={{ display: "flex", gap: 6 }}>
-        {key(shift ? "abc" : "ABC", () => setShift(!shift), 1.5)}
-        {key("Space", () => set(v + " "), 4)}
-        {key("⌫", () => set(v.slice(0, -1)), 1.5)}
+        {key(shift ? "abc" : "ABC", () => setShift(!shift), 1.5, false, "LB")}
+        {key("Space", () => set(v + " "), 4, false, "Y")}
+        {key("⌫", () => set(v.slice(0, -1)), 1.5, false, "X")}
         {key("Clear", () => set(""), 1.5)}
         {key("Done", () => closeModal?.(), 1.5)}
       </div>
+      <div style={{ marginTop: 10, fontSize: 11, color: C.dim, textAlign: "center" }}>{`${btn("A", kind)} type  ·  ${btn("B", kind)} close  ·  ${btn("X", kind)} backspace  ·  ${btn("Y", kind)} space  ·  ${btn("LB", kind)} shift  ·  ${kind === "ps" ? "Options" : "Start"} done`}</div>
     </div>
   );
 }

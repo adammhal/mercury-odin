@@ -25,20 +25,36 @@ export function Art({ src, s, tile }: { src: string; s: Slot; tile?: { w: number
 }
 
 /** Choose one SteamGridDB image for a slot. The first tile keeps Steam's own store art. */
+/** The last term typed per game, so every slot's picker starts with it. */
+const lastTerm: Record<number, string> = {};
+
 export function ArtPicker({ appid, s, name, onPick, closeModal }: { appid: number; s: Slot; name?: string; onPick: (o: SgdbOpt | null) => void; closeModal?: () => void }) {
   const [opts, setOpts] = useState<SgdbOpt[]>();
   const [err, setErr] = useState<string>();
-  useEffect(() => { api.sgdb(appid, s.slot, name).then((r) => setOpts(r.options), (e) => setErr(e.message)); }, []);
+  const [game, setGame] = useState<string>();
+  const [term, setTerm] = useState(lastTerm[appid] ?? name ?? "");
+  // SteamGridDB lists some games under a different name than the title saved in Steam, so the search term is separate.
+  const load = (t: string, byName: boolean) => {
+    setOpts(undefined); setErr(undefined);
+    api.sgdb(appid, s.slot, t.trim() || name, byName).then((r) => { setOpts(r.options); setGame(r.game); }, (e) => setErr(e.message));
+  };
+  useEffect(() => { load(term, term.trim() !== (name ?? "") && !!lastTerm[appid]); }, []);
+  const search = () => { lastTerm[appid] = term.trim(); load(term, true); };
   const scale = s.slot === 0 ? 0.9 : s.slot === 1 ? 0.8 : 0.9;
   const tile = { w: Math.round(s.w * scale), h: Math.round(s.h * scale) };
   const pick = (o: SgdbOpt | null) => { closeModal?.(); onPick(o); };
   return (
     <ModalRoot closeModal={closeModal}>
       <div style={{ width: 760, maxWidth: "96%", background: "#171d25", borderRadius: 6, padding: "16px 18px" }}>
-        <div style={{ fontSize: 16, fontWeight: 700, color: "#fff", marginBottom: 10 }}>Choose {s.label.toLowerCase()} art</div>
+        <div style={{ fontSize: 16, fontWeight: 700, color: "#fff", marginBottom: 8 }}>Choose {s.label.toLowerCase()} art</div>
+        <Focusable flow-children="horizontal" style={{ display: "flex", gap: 10, alignItems: "flex-end", marginBottom: 8 }}>
+          <div style={{ flex: 1 }}><TextField label="Search SteamGridDB for" value={term} onChange={(e) => setTerm(e.target.value)} /></div>
+          <Btn style={{ width: 110, height: 34, marginBottom: 4 }} onClick={search}>Search</Btn>
+        </Focusable>
+        {game && <div style={{ fontSize: 11, color: C.dim, marginBottom: 8 }}>Showing art for <b style={{ color: "#fff" }}>{game}</b></div>}
         {err && <div style={{ color: C.bad, fontSize: 13, marginBottom: 8 }}>{err}</div>}
         {!opts && !err && <div style={{ display: "flex", alignItems: "center", gap: 8, color: C.dim }}><Spinner style={{ width: 18, height: 18 }} /> Loading SteamGridDB…</div>}
-        <Focusable flow-children="grid" style={{ display: "flex", flexWrap: "wrap", gap: 10, maxHeight: 340, overflowY: "auto", padding: 4, scrollPaddingBottom: 12 }}>
+        <Focusable flow-children="grid" style={{ display: "flex", flexWrap: "wrap", gap: 10, maxHeight: 300, overflowY: "auto", padding: 4, scrollPaddingBottom: 12 }}>
           <Focusable autoFocus focusClassName={FOCUS} noFocusRing onActivate={() => pick(null)} onFocus={scrollIntoView} style={{ borderRadius: 4 }}>
             <div style={{ width: tile.w, height: tile.h, borderRadius: 4, background: C.panel2, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, color: "#fff", textAlign: "center", padding: 6, boxSizing: "border-box" }}>Steam&apos;s own art</div>
           </Focusable>
@@ -48,7 +64,7 @@ export function ArtPicker({ appid, s, name, onPick, closeModal }: { appid: numbe
             </Focusable>
           ))}
         </Focusable>
-        {opts && !opts.length && <div style={{ color: C.dim, fontSize: 13, marginTop: 8 }}>SteamGridDB has no {s.label.toLowerCase()} images for this game.</div>}
+        {opts && !opts.length && <div style={{ color: C.dim, fontSize: 13, marginTop: 8 }}>SteamGridDB has no {s.label.toLowerCase()} images for this search.</div>}
       </div>
     </ModalRoot>
   );
