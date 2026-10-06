@@ -369,6 +369,20 @@ impl Manager {
         Ok(())
     }
 
+    /// Windows: the installer was closed or finished while Mercury was not watching (it was restarted or closed).
+    /// Look for the installed game in the job's folder and finish the job.
+    #[cfg(windows)]
+    pub async fn finish_setup(self: Arc<Self>, id: u64) -> Result<()> {
+        let job = self.get(id).ok_or_else(|| anyhow!("no such job"))?;
+        if !matches!(job.state, State::NeedsSetup | State::Installing) { bail!("{} is not at the installer step", job.name); }
+        let target = self.cfg.lock().unwrap().games_dir.join(slug(&job.name));
+        let cands = install::find_game_exe(&target, &job.name);
+        let exe = cands.first().filter(|c| c.score > -500).map(|c| c.path.clone())
+            .ok_or_else(|| anyhow!("No installed game found in {} yet. Finish the installer first.", target.display()))?;
+        self.update(id, |j| { j.exe = Some(exe); j.candidates = cands.into_iter().take(8).map(|c| c.path).collect(); j.state = State::Ready; j.error = None });
+        self.add_to_library(id).await
+    }
+
     /// Windows: record the game in Mercury's library and add it to warmUP.
     #[cfg(windows)]
     async fn add_to_library(&self, id: u64) -> Result<()> {

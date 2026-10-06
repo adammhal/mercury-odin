@@ -14,6 +14,7 @@ function Actions({ job, reload }: { job: Job; reload: () => void }) {
   if (["queued", "resolving", "caching", "downloading"].includes(job.state)) out.push(b("Pause", act("pause")));
   if (["paused", "failed"].includes(job.state)) out.push(b(job.state === "failed" ? "Retry" : "Resume", act("resume")));
   if (job.state === "needs_setup") out.push(b("Run installer", run(() => pc.runSetup(job.id))));
+  if (job.state === "installing") out.push(b("Installer finished", run(() => pc.finishSetup(job.id))));
   if (job.state === "needs_setup" && job.error) out.push(b("Run as admin", run(() => pc.runSetup(job.id, true))));
   if (job.state === "review") out.push(b("Review & add", () => Navigation.Navigate(`/mercury/review/${job.id}`)));
   const finished = ["done", "failed", "cancelled"].includes(job.state);

@@ -10,5 +10,6 @@ export const pc = {
   play: (appid: number) => post(`/library/${appid}/play`),
   openUrl: (url: string) => post("/open", { url }),
   power: (action: "sleep" | "restart" | "shutdown" | "signout") => post(`/power/${action}`),
+  finishSetup: (id: number) => post(`/jobs/${id}/finish-setup`),
   runSetup: (id: number, admin = false) => post(`/jobs/${id}/${admin ? "run-setup-admin" : "run-setup"}`),
 };

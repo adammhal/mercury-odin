@@ -193,6 +193,8 @@ async fn job_action(State(a): State<App>, Path((id, act)): Path<(u64, String)>, 
         #[cfg(windows)]
         "run-setup" => a.m.clone().run_setup(id, false).await?,
         #[cfg(windows)]
+        "finish-setup" => a.m.clone().finish_setup(id).await?,
+        #[cfg(windows)]
         "run-setup-admin" => a.m.clone().run_setup(id, true).await?,
         #[cfg(windows)]
         "confirm" => a.m.clone().confirm_review(id, b.name, b.art).await?,
