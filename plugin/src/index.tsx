@@ -15,6 +15,7 @@ import { Search } from "./pages/Search";
 import { Settings } from "./pages/Settings";
 import { addToSteam, onAppExit, shortcutExists } from "./steam";
 import { Review } from "./pages/Review";
+import { EditArt } from "./pages/EditArt";
 import { setReviewHandler } from "./review";
 import { Navigation } from "@decky/ui";
 import { checkBrowserDownload } from "./browser";
@@ -31,7 +32,7 @@ setReviewHandler(async (job, r) => {
 const ROUTES: [string, FC][] = [
   ["/mercury", Home], ["/mercury/game/:appid", Game], ["/mercury/downloads", Downloads],
   ["/mercury/library", Library], ["/mercury/import", Import], ["/mercury/search", Search], ["/mercury/settings", Settings],
-  ["/mercury/review/:id", Review],
+  ["/mercury/review/:id", Review], ["/mercury/edit-art/:appid", EditArt],
 ];
 
 /** Background work that must happen even when no Mercury page is open. */

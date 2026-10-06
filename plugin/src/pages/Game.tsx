@@ -90,6 +90,7 @@ export function Game() {
           <Focusable flow-children="horizontal" style={{ display: "flex", gap: 10, marginBottom: 18 }}>
             <Btn autoFocus onClick={() => SteamClient.Apps.RunGame(gameId(entry.shortcut_id), "", -1, 100)}
               style={{ height: 36, width: 140, fontSize: 14, background: "linear-gradient(90deg,#70d61d,#01a75b)" }}>Play</Btn>
+            <Btn onClick={() => Navigation.Navigate(`/mercury/edit-art/${appid}`)} style={{ height: 36, width: 140, fontSize: 14 }}>Edit artwork</Btn>
             <Btn onClick={uninstall} style={{ height: 36, width: 120, fontSize: 14 }}>Uninstall</Btn>
             {setupFiles && <Btn style={{ height: 36 }} onClick={() => showModal(<ConfirmModal strTitle="Delete installer files?" strOKButtonText="Delete"
               strDescription={`The repack's setup files (${bytes(setupFiles.size)}) are not needed to play. Delete them only after the game launches and works.`}

@@ -56,7 +56,9 @@ export const api = {
   app: (id: number) => req<App>(`/steam/app/${id}`),
   art: (id: number) => req<{ assets: [number, string, string][]; icon?: string | null }>(`/steam/art/${id}`),
   sgdb: (appid: number, slot: number, name?: string) => req<{ options: SgdbOpt[] }>(`/sgdb/${appid}/${slot}${name ? `?name=${encodeURIComponent(name)}` : ""}`),
-  editArt: (appid: number, body: { name?: string; art: Record<string, string> }) => req<{ ok: boolean; changed: boolean }>(`/library/${appid}/art`, "POST", body),
+  editArt: (appid: number, body: { name?: string; art: Record<string, string> }) =>
+    req<{ ok: boolean; changed: boolean; name?: string | null; assets?: [number, string, string][]; shortcut_id?: number }>(`/library/${appid}/art`, "POST", body),
+  renamed: (appid: number, name: string) => req<unknown>(`/library/${appid}/renamed`, "POST", { name }),
   resolveArt: (appid: number, choices: Record<string, string>) => req<{ assets: [number, string, string][] }>("/art/resolve", "POST", { appid, choices }),
   sources: (name: string, refresh = false) =>
     req<{ sources: Source[]; installed_estimate: number[]; errors: string[] }>(`/sources?name=${encodeURIComponent(name)}${refresh ? "&refresh=true" : ""}`),

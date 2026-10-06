@@ -395,8 +395,20 @@ async fn edit_art(State(a): State<App>, Path(appid): Path<u32>, Json(b): Json<Ed
         if let Some(n) = name { a.m.rename_library(appid, n); }
         Ok(Json(json!({ "ok": true, "changed": true })))
     }
+    // Odin: only the plugin can reach Steam's client, so hand it the images for the changed slots to apply.
     #[cfg(not(windows))]
-    { let _ = (a, appid, b); Err(anyhow::anyhow!("only available on Windows").into()) }
+    {
+        let e = a.m.library().into_iter().find(|e| e.appid == appid).ok_or_else(|| anyhow::anyhow!("not installed"))?;
+        let name = b.name.as_deref().map(str::trim).filter(|n| !n.is_empty() && *n != e.name).map(String::from);
+        let assets = sgdb::chosen(&a.m.http, appid, &b.art).await?;
+        Ok(Json(json!({ "ok": true, "changed": name.is_some() || !assets.is_empty(), "name": name, "assets": assets, "shortcut_id": e.shortcut_id })))
+    }
+}
+
+/// Odin: the plugin set the new title in Steam; keep Mercury's library in step.
+async fn renamed(State(a): State<App>, Path(appid): Path<u32>, Json(b): Json<EditArtBody>) -> R {
+    if let Some(n) = b.name.as_deref().map(str::trim).filter(|n| !n.is_empty()) { a.m.rename_library(appid, n); }
+    Ok(Json(json!({ "ok": true })))
 }
 
 /// Windows: the artwork Steam shows now for a shortcut (so the editor can show what is wrong).
@@ -404,6 +416,13 @@ async fn grid_art(Path((shortcut, slot)): Path<(u32, u8)>) -> axum::response::Re
     #[cfg(windows)]
     if let Some((p, ct)) = steamwin::grid_file(shortcut, slot) {
         if let Ok(bytes) = tokio::fs::read(&p).await {
+            return ([(axum::http::header::CONTENT_TYPE, ct), (axum::http::header::CACHE_CONTROL, "no-store")], bytes).into_response();
+        }
+    }
+    #[cfg(not(windows))]
+    if let Some(p) = steam::grid_file(shortcut, slot) {
+        if let Ok(bytes) = tokio::fs::read(&p).await {
+            let ct = if p.extension().is_some_and(|e| e == "png") { "image/png" } else { "image/jpeg" };
             return ([(axum::http::header::CONTENT_TYPE, ct), (axum::http::header::CACHE_CONTROL, "no-store")], bytes).into_response();
         }
     }
@@ -558,6 +577,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/launcher/setup", post(launcher_setup))
         .route("/library/register", post(register_games))
         .route("/library/{appid}/art", post(edit_art))
+        .route("/library/{appid}/renamed", post(renamed))
         .route("/steam/grid/{shortcut}/{slot}", get(grid_art))
         .route("/assist/browser/{act}", post(assist_browser))
         .route("/sgdb/{appid}/{slot}", get(sgdb_options))
