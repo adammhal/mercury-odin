@@ -403,9 +403,9 @@ async fn launcher_setup(State(a): State<App>) -> R {
         let dir = std::env::current_exe()?.parent().map(|p| p.to_path_buf()).unwrap_or_default();
         let exe = dir.join("Mercury.exe");
         let mut art = vec![];
-        for (t, f) in [(0u8, "cover.jpg"), (1, "hero.jpg")] {
+        for (t, f) in [(0u8, "cover.jpg"), (1, "hero.jpg"), (2, "logo.png"), (3, "wide.jpg")] {
             if let Ok(b) = std::fs::read(dir.join("art").join(f)) {
-                art.push((t, "jpg".to_string(), base64::Engine::encode(&base64::engine::general_purpose::STANDARD, b)));
+                art.push((t, f.rsplit('.').next().unwrap_or("jpg").to_string(), base64::Engine::encode(&base64::engine::general_purpose::STANDARD, b)));
             }
         }
         let id = steamwin::add_shortcut(&http, "Mercury", &exe, &art).await?;
