@@ -1,6 +1,6 @@
 //! Windows: while a repack's installer runs, bring its window to the front and let the controller drive it,
 //! because installer windows are plain mouse-and-keyboard programs.
-//!   left stick: mouse · A: click · X: space · D-pad: arrow keys (repeat while held) · Start: Enter (Next) · right stick: scroll
+//!   left stick: mouse · A: click · X: space · D-pad: arrow keys (repeat while held) · RB / LB: Tab / Shift+Tab · Start: Enter (Next) · right stick: scroll
 //! Works only on a non-elevated installer (Windows does not let a normal program send input to an elevated window).
 use std::{path::{Path, PathBuf}, sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}}, time::{Duration, Instant}};
 use windows_sys::Win32::{
@@ -105,12 +105,20 @@ fn front(h: HWND) {
     unsafe {
         ShowWindow(h, SW_RESTORE);
         SetWindowPos(h, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
-        // Windows only lets the foreground app hand focus on: borrow its input queue for a moment.
+        // Windows only lets the foreground app hand focus on. Drop the focus-stealing lock, tap Alt (which counts as
+        // the user's input), borrow the foreground app's input queue, then ask for focus.
+        SystemParametersInfoW(SPI_SETFOREGROUNDLOCKTIMEOUT, 0, std::ptr::null_mut(), SPIF_SENDCHANGE);
+        AllowSetForegroundWindow(ASFW_ANY);
+        keybd_event(VK_MENU as u8, 0, 0, 0);
+        keybd_event(VK_MENU as u8, 0, KEYEVENTF_KEYUP, 0);
         let fg = GetForegroundWindow();
         let ft = if fg.is_null() { 0 } else { GetWindowThreadProcessId(fg, std::ptr::null_mut()) };
         let me = GetCurrentThreadId();
         if ft != 0 && ft != me { AttachThreadInput(me, ft, 1); }
         SetForegroundWindow(h);
+        BringWindowToTop(h);
+        SwitchToThisWindow(h, 1);
+        SetFocus(h);
         if ft != 0 && ft != me { AttachThreadInput(me, ft, 0); }
     }
 }
@@ -126,7 +134,7 @@ fn tap(vk: u16) { send(&[key(vk, false), key(vk, true)]); }
 
 /// One controller reading, whichever way it was obtained.
 #[derive(Default, Clone, Copy)]
-struct Pad { lx: f32, ly: f32, ry: f32, a: bool, x: bool, start: bool, up: bool, down: bool, left: bool, right: bool }
+struct Pad { lx: f32, ly: f32, ry: f32, a: bool, x: bool, start: bool, up: bool, down: bool, left: bool, right: bool, lb: bool, rb: bool }
 
 // ---- HID: Apollo emulates a DualShock 4 (not an Xbox pad), which XInput cannot see ----
 struct Hid { latest: Arc<Mutex<Option<(u16, Vec<u8>)>>>, handles: Vec<usize> }
@@ -209,7 +217,7 @@ fn parse_sony(pid: u16, d: &[u8]) -> Option<Pad> {
     let (b1, b2) = if dual_sense { (*d.get(8)?, *d.get(9)?) } else { (*d.get(5)?, *d.get(6)?) };
     let hat = b1 & 0x0F;
     Some(Pad { lx: stick(d[1]), ly: -stick(d[2]), ry: -stick(*d.get(4)?), a: b1 & 0x20 != 0, x: b1 & 0x10 != 0, start: b2 & 0x20 != 0,
-        up: matches!(hat, 7 | 0 | 1), down: matches!(hat, 3 | 4 | 5), left: matches!(hat, 5 | 6 | 7), right: matches!(hat, 1 | 2 | 3) })
+        up: matches!(hat, 7 | 0 | 1), down: matches!(hat, 3 | 4 | 5), left: matches!(hat, 5 | 6 | 7), right: matches!(hat, 1 | 2 | 3), lb: b2 & 0x01 != 0, rb: b2 & 0x02 != 0 })
 }
 
 fn xinput_pad() -> Option<Pad> {
@@ -218,7 +226,8 @@ fn xinput_pad() -> Option<Pad> {
     let g = st.Gamepad; let b = g.wButtons;
     Some(Pad { lx: axis(g.sThumbLX), ly: axis(g.sThumbLY), ry: axis(g.sThumbRY), a: b & XINPUT_GAMEPAD_A != 0, x: b & XINPUT_GAMEPAD_X != 0,
         start: b & XINPUT_GAMEPAD_START != 0, up: b & XINPUT_GAMEPAD_DPAD_UP != 0, down: b & XINPUT_GAMEPAD_DPAD_DOWN != 0,
-        left: b & XINPUT_GAMEPAD_DPAD_LEFT != 0, right: b & XINPUT_GAMEPAD_DPAD_RIGHT != 0 })
+        left: b & XINPUT_GAMEPAD_DPAD_LEFT != 0, right: b & XINPUT_GAMEPAD_DPAD_RIGHT != 0,
+        lb: b & XINPUT_GAMEPAD_LEFT_SHOULDER != 0, rb: b & XINPUT_GAMEPAD_RIGHT_SHOULDER != 0 })
 }
 
 const DEAD: f32 = 7849.0;
@@ -230,6 +239,7 @@ fn axis(v: i16) -> f32 {
 fn run(setup_dir: &Path, stop: &Arc<AtomicBool>) {
     tracing::info!("assist: started for {}", setup_dir.display());
     let hid = start_hid(stop.clone());
+    let mut tries = 0u32;
     let (mut prev, mut last_front, mut last_scan, mut last_log) = (Pad::default(), Instant::now() - Duration::from_secs(10), Instant::now() - Duration::from_secs(10), Instant::now() - Duration::from_secs(10));
     let mut wheel = 0f32;
     let mut held: [Option<Instant>; 4] = [None; 4];
@@ -243,7 +253,10 @@ fn run(setup_dir: &Path, stop: &Arc<AtomicBool>) {
             // Keep the installer on top, but not more than every few seconds so the user can still switch away.
             if let Some(&w) = wins.first() {
                 if last_log.elapsed() > Duration::from_secs(5) { last_log = Instant::now(); tracing::info!("assist: {} installer window(s); foreground is installer: {}", wins.len(), wins.contains(&fg)); }
-                if !wins.contains(&fg) && last_front.elapsed() > Duration::from_secs(4) { front(w); last_front = Instant::now(); tracing::info!("assist: brought the installer to the front"); }
+                // Retry quickly until the installer really has focus, then only now and then (so the user can switch away).
+                let wait = if tries < 8 { Duration::from_millis(700) } else { Duration::from_secs(5) };
+                if wins.contains(&fg) { tries = 0; }
+                else if last_front.elapsed() > wait { front(w); last_front = Instant::now(); tries += 1; tracing::info!("assist: brought the installer to the front (try {tries})"); }
             }
         }
         let sony = hid.latest.lock().unwrap().as_ref().and_then(|(pid, d)| parse_sony(*pid, d));
@@ -264,6 +277,8 @@ fn run(setup_dir: &Path, stop: &Arc<AtomicBool>) {
             if !p.a && prev.a { send(&[mouse(MOUSEEVENTF_LEFTUP, 0)]); }
             if p.x && !prev.x { tap(VK_SPACE); }
             if p.start && !prev.start { tap(VK_RETURN); }
+            if p.rb && !prev.rb { tap(VK_TAB); }
+            if p.lb && !prev.lb { send(&[key(VK_SHIFT, false), key(VK_TAB, false), key(VK_TAB, true), key(VK_SHIFT, true)]); }
             // D-pad: arrow keys, repeating while held (after a short delay, like a keyboard).
             for (down, was, vk, i) in [(p.up, prev.up, VK_UP, 0), (p.down, prev.down, VK_DOWN, 1), (p.left, prev.left, VK_LEFT, 2), (p.right, prev.right, VK_RIGHT, 3)] {
                 if !down { held[i] = None; continue; }
