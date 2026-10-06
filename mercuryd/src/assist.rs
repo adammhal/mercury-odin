@@ -122,10 +122,10 @@ fn installer_windows(setup_dir: &Path) -> Vec<HWND> {
     all.into_iter().filter(|(_, pid)| image_of(*pid).is_some_and(|p| is_installer(&p, setup_dir))).map(|(h, _)| h).collect()
 }
 
-fn front(h: HWND) {
+fn front(h: HWND, topmost: bool) {
     unsafe {
         ShowWindow(h, SW_RESTORE);
-        SetWindowPos(h, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+        if topmost { SetWindowPos(h, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW); }
         // Windows only lets the foreground app hand focus on. Drop the focus-stealing lock, tap Alt (which counts as
         // the user's input), borrow the foreground app's input queue, then ask for focus.
         SystemParametersInfoW(SPI_SETFOREGROUNDLOCKTIMEOUT, 0, std::ptr::null_mut(), SPIF_SENDCHANGE);
@@ -241,6 +241,55 @@ fn parse_sony(pid: u16, d: &[u8]) -> Option<Pad> {
         up: matches!(hat, 7 | 0 | 1), down: matches!(hat, 3 | 4 | 5), left: matches!(hat, 5 | 6 | 7), right: matches!(hat, 1 | 2 | 3), lb: b2 & 0x01 != 0, rb: b2 & 0x02 != 0 })
 }
 
+/// The PlayStation / Home button on a DualShock 4 (byte 7) or DualSense (byte 10), report 0x01.
+fn ps_button(pid: u16, d: &[u8]) -> bool {
+    d.first() == Some(&1) && d.get(if matches!(pid, 0x0CE6 | 0x0DF2) { 10 } else { 7 }).is_some_and(|b| b & 1 != 0)
+}
+
+fn window_titled(title: &str) -> Option<HWND> {
+    let mut all: Vec<(HWND, u32)> = vec![];
+    unsafe { EnumWindows(Some(collect), &mut all as *mut _ as LPARAM); }
+    all.into_iter().map(|(h, _)| h).find(|&h| unsafe {
+        let mut buf = [0u16; 64];
+        let n = GetWindowTextW(h, buf.as_mut_ptr(), 64);
+        n > 0 && String::from_utf16_lossy(&buf[..n as usize]) == title
+    })
+}
+
+/// Steam's overlay cannot attach to Mercury (a web-view app, not a game), so Steam's Home-button menu would open behind
+/// Mercury's full-screen window. While Mercury is in front, the Home / PS button raises Steam's Big Picture window instead.
+/// Runs for the life of the engine; real games keep Steam's own overlay.
+pub fn start_home_watch() {
+    if std::env::args().any(|a| a == "--assist") { return; } // the elevated helper must not run a second watcher
+    std::thread::spawn(|| {
+        let never = Arc::new(AtomicBool::new(false));
+        loop {
+            let hid = start_hid(never.clone());
+            if hid.handles.is_empty() { std::thread::sleep(Duration::from_secs(4)); continue; }
+            let rescan = Instant::now() + Duration::from_secs(30);
+            let mut was = false;
+            while Instant::now() < rescan {
+                let now = hid.latest.lock().unwrap().as_ref().is_some_and(|(pid, d)| ps_button(*pid, d));
+                if now && !was {
+                    unsafe {
+                        let fg = GetForegroundWindow();
+                        let mut pid = 0u32;
+                        GetWindowThreadProcessId(fg, &mut pid);
+                        let mercury_in_front = image_of(pid).is_some_and(|p| p.to_lowercase().ends_with("\\mercury.exe"));
+                        if mercury_in_front {
+                            if let Some(bp) = window_titled("Steam Big Picture Mode") { front(bp, false); tracing::info!("home: raised Steam over Mercury"); }
+                        }
+                    }
+                }
+                was = now;
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            // Closing the handles ends the reader threads; reconnecting a controller is picked up on the next pass.
+            for h in hid.handles { unsafe { CloseHandle(h as _); } }
+        }
+    });
+}
+
 fn xinput_pad() -> Option<Pad> {
     let mut st: XINPUT_STATE = unsafe { std::mem::zeroed() };
     (0..4).find(|&i| unsafe { XInputGetState(i, &mut st) } == 0)?;
@@ -279,7 +328,7 @@ fn run(mode: &Mode, stop: &Arc<AtomicBool>) {
                 // Retry quickly until the installer really has focus, then only now and then (so the user can switch away).
                 let wait = if tries < 8 { Duration::from_millis(700) } else { Duration::from_secs(5) };
                 if wins.contains(&fg) { tries = 0; }
-                else if last_front.elapsed() > wait { front(w); last_front = Instant::now(); tries += 1; tracing::info!("assist: brought the installer to the front (try {tries})"); }
+                else if last_front.elapsed() > wait { front(w, true); last_front = Instant::now(); tries += 1; tracing::info!("assist: brought the installer to the front (try {tries})"); }
             }
         }
         let sony = hid.latest.lock().unwrap().as_ref().and_then(|(pid, d)| parse_sony(*pid, d));

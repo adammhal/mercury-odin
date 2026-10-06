@@ -474,6 +474,8 @@ async fn main() -> anyhow::Result<()> {
     #[cfg(not(windows))]
     tracing_subscriber::fmt().with_env_filter(filter).init();
     #[cfg(windows)]
+    assist::start_home_watch();
+    #[cfg(windows)]
     {
         let args: Vec<String> = std::env::args().collect();
         if let Some(i) = args.iter().position(|a| a == "--assist") {
