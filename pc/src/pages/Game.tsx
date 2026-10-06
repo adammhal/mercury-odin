@@ -1,7 +1,7 @@
 import { ConfirmModal, Focusable, Navigation, showModal, Spinner, useParams } from "@decky/ui";
 import { toaster } from "@decky/api";
-import { useState } from "react";
-import { api, bytes, cdn, Source } from "@shared/api";
+import { useRef, useState } from "react";
+import { api, bytes, cdn, gridArt, Source } from "@shared/api";
 import { useOnce, usePoll } from "@shared/hooks";
 import { Btn, C, Chip, FOCUS, FocusStyle, JobProgress, page, scrollIntoView } from "@shared/ui";
 import { downloadInBrowser } from "../browser";
@@ -42,16 +42,19 @@ export function Game() {
     strDescription={`Deletes ${bytes(entry?.size ?? 0)} and removes it from Steam.`}
     onOK={async () => { try { await api.uninstall(appid); reloadLib(); } catch (e: any) { toaster.toast({ title: "Mercury", body: e.message }); } }} />);
 
+  // Games Mercury added without a Steam store page (or whose store art is wrong) use the art Steam shows for the shortcut.
+  const stamp = useRef(Date.now()).current;
+  const sid = entry?.shortcut_id;
   const play = async () => { try { await pc.play(appid); } catch (e: any) { toaster.toast({ title: "Mercury", body: e.message }); } };
 
   return (
     <div style={page}>
       <FocusStyle />
-      <div style={{ position: "relative", height: 180, background: `url(${cdn(appid, "library_hero.jpg")}) center 30%/cover` }}>
+      <div style={{ position: "relative", height: 180, background: `${sid ? `url(${gridArt(sid, 1, stamp)}) center 30%/cover, ` : ""}url(${cdn(appid, "library_hero.jpg")}) center 30%/cover` }}>
         <div style={{ position: "absolute", inset: 0, background: `linear-gradient(transparent 40%,${C.bg})` }} />
-        <img src={cdn(appid, "logo.png")} style={{ position: "absolute", left: 28, top: 24, maxWidth: 260, maxHeight: 80, filter: "drop-shadow(0 4px 18px rgba(0,0,0,.7))" }}
+        <img src={sid ? gridArt(sid, 2, stamp) : cdn(appid, "logo.png")} style={{ position: "absolute", left: 28, top: 24, maxWidth: 260, maxHeight: 80, filter: "drop-shadow(0 4px 18px rgba(0,0,0,.7))" }}
           onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
-        <div style={{ position: "absolute", left: 28, bottom: 10, fontSize: 18, fontWeight: 700, color: "#fff" }}>{app?.name ?? ""}</div>
+        <div style={{ position: "absolute", left: 28, bottom: 10, fontSize: 18, fontWeight: 700, color: "#fff" }}>{app?.name ?? entry?.name ?? ""}</div>
       </div>
 
       <div style={{ padding: "6px 28px 48px" }}>
