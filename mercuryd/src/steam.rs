@@ -19,6 +19,9 @@ pub struct App {
     pub release: String,
     #[serde(default)]
     pub developer: String,
+    /// Not out yet (Steam's "coming soon"); the wishlist hides these.
+    #[serde(default)]
+    pub coming_soon: bool,
     /// Portrait cover URL. Newer games keep art under hashed paths, so the plain CDN path is often a 404.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cover: Option<String>,
@@ -27,7 +30,7 @@ pub struct App {
 static DETAILS: Mutex<Option<HashMap<u32, App>>> = Mutex::new(None);
 
 fn cache_path() -> std::path::PathBuf {
-    data_dir().join("appdetails.json")
+    data_dir().join("appdetails-v2.json")
 }
 
 fn with_cache<T>(f: impl FnOnce(&mut HashMap<u32, App>) -> T) -> T {
@@ -60,13 +63,17 @@ pub async fn details(http: &reqwest::Client, appid: u32) -> Result<App> {
         genres: d["genres"].as_array().map(|g| g.iter().filter_map(|x| x["description"].as_str().map(String::from)).take(3).collect()).unwrap_or_default(),
         release: d["release_date"]["date"].as_str().unwrap_or_default().to_string(),
         developer: d["developers"][0].as_str().unwrap_or_default().to_string(),
+        coming_soon: d["release_date"]["coming_soon"].as_bool().unwrap_or(false),
         cover: None,
     };
-    with_cache(|m| {
-        m.insert(appid, app.clone());
-        let _ = fs::create_dir_all(data_dir());
-        let _ = fs::write(cache_path(), serde_json::to_vec(m).unwrap_or_default());
-    });
+    // An unreleased game is not cached, so it shows up as soon as it is released.
+    if !app.coming_soon {
+        with_cache(|m| {
+            m.insert(appid, app.clone());
+            let _ = fs::create_dir_all(data_dir());
+            let _ = fs::write(cache_path(), serde_json::to_vec(m).unwrap_or_default());
+        });
+    }
     Ok(app)
 }
 
@@ -108,7 +115,8 @@ pub async fn wishlist(http: &reqwest::Client) -> Result<Vec<App>> {
     use futures_util::StreamExt;
     let out: Vec<App> = futures_util::stream::iter(items.into_iter().map(|(_, appid)| async move { details(http, appid).await.ok() }))
         .buffered(6).filter_map(|a| async move { a }).collect().await;
-    let mut out = out;
+    // Games that are not out yet cannot be downloaded, so they stay off the list.
+    let mut out: Vec<App> = out.into_iter().filter(|a| !a.coming_soon).collect();
     with_covers(http, &mut out).await;
     Ok(out)
 }
@@ -119,7 +127,7 @@ pub async fn search(http: &reqwest::Client, q: &str) -> Result<Vec<App>> {
         .send().await?.json().await?;
     let mut out: Vec<App> = v["items"].as_array().cloned().unwrap_or_default().iter()
         .filter(|i| i["type"].as_str() == Some("app"))
-        .filter_map(|i| Some(App { appid: i["id"].as_u64()? as u32, name: i["name"].as_str()?.to_string(), description: String::new(), genres: vec![], release: String::new(), developer: String::new(), cover: None }))
+        .filter_map(|i| Some(App { appid: i["id"].as_u64()? as u32, name: i["name"].as_str()?.to_string(), description: String::new(), genres: vec![], release: String::new(), developer: String::new(), coming_soon: false, cover: None }))
         .collect();
     with_covers(http, &mut out).await;
     Ok(out)

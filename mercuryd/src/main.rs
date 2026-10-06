@@ -3,6 +3,8 @@
 
 mod browser;
 mod cache;
+#[cfg(windows)]
+mod assist;
 mod config;
 mod download;
 mod extract;
@@ -189,7 +191,9 @@ async fn job_action(State(a): State<App>, Path((id, act)): Path<(u64, String)>, 
         "setup-done" => return Ok(Json(json!(a.m.setup_done(id)?))),
         "shortcut-created" => a.m.shortcut_created(id, b.shortcut_id.ok_or_else(|| anyhow::anyhow!("shortcut_id required"))?),
         #[cfg(windows)]
-        "run-setup" => a.m.clone().run_setup(id).await?,
+        "run-setup" => a.m.clone().run_setup(id, false).await?,
+        #[cfg(windows)]
+        "run-setup-admin" => a.m.clone().run_setup(id, true).await?,
         #[cfg(windows)]
         "confirm" => a.m.clone().confirm_review(id, b.name, b.art).await?,
         "steam-added" => a.m.steam_added(id, b.shortcut_id.ok_or_else(|| anyhow::anyhow!("shortcut_id required"))?, b.exe, b.name)?,

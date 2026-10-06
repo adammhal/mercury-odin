@@ -40,10 +40,13 @@ if steam:
     subprocess.run(["powershell", "-NoProfile", "-Command",
         f"$s=(New-Object -ComObject WScript.Shell).CreateShortcut('{lnk}'); $s.TargetPath='{steam}\\steam.exe'; $s.Arguments='-bigpicture'; $s.WorkingDirectory='{steam}'; $s.Save()"], check=True)
     print("startup shortcut:", lnk)
-    # Start the engine detached (it outlives this script) and let it add Mercury to Steam, restarting Steam once if needed.
-    for flags in (0x00000008 | 0x00000200 | 0x01000000, 0x00000008 | 0x00000200):
-        try: subprocess.Popen([os.path.join(DEST, "mercuryd.exe")], creationflags=flags, close_fds=True); break
-        except OSError: pass
+    # Start the engine in the logged-in user's desktop session. A process started from SSH lands in a hidden session, and
+    # the installers and prompts it opens would be invisible.
+    ps = ("$a=New-ScheduledTaskAction -Execute '%s' -WorkingDirectory '%s'; "
+          "$p=New-ScheduledTaskPrincipal -UserId \"$env:COMPUTERNAME\\$env:USERNAME\" -LogonType Interactive -RunLevel Limited; "
+          "Register-ScheduledTask -TaskName MercuryEngineStart -Action $a -Principal $p -Force | Out-Null; "
+          "Start-ScheduledTask -TaskName MercuryEngineStart; Start-Sleep 3; Unregister-ScheduledTask -TaskName MercuryEngineStart -Confirm:$false") % (os.path.join(DEST, "mercuryd.exe"), DEST)
+    subprocess.run(["powershell", "-NoProfile", "-Command", ps], check=False)
     import json, urllib.request
     for _ in range(20):
         try: urllib.request.urlopen("http://127.0.0.1:47800/status", timeout=2); break

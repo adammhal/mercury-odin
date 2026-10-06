@@ -321,10 +321,11 @@ impl Manager {
         Ok(())
     }
 
-    /// Windows: run a repack's setup.exe (elevated, it asks for admin anyway) into games_dir/<name>,
-    /// wait for it to close, then find the game and add it to warmUP.
+    /// Windows: run a repack's setup.exe into games_dir/<name>, wait for it to close, then find the game and add it.
+    /// By default it runs as the normal user (RunAsInvoker): no admin prompt, and the controller can drive its window
+    /// (`assist`). `admin` runs it elevated instead, for installers that fail without it; the controller cannot drive those.
     #[cfg(windows)]
-    pub async fn run_setup(self: Arc<Self>, id: u64) -> Result<()> {
+    pub async fn run_setup(self: Arc<Self>, id: u64, admin: bool) -> Result<()> {
         let job = self.get(id).ok_or_else(|| anyhow!("no such job"))?;
         if job.state != State::NeedsSetup { bail!("{} is not waiting for its installer", job.name); }
         let setup = job.setup_exe.clone().ok_or_else(|| anyhow!("no installer"))?;
@@ -333,17 +334,26 @@ impl Manager {
         let me = self.clone();
         tokio::spawn(async move {
             let res: Result<()> = async {
-                // Start-Process -Verb RunAs shows the UAC prompt; -Wait returns when the installer closes.
-                let q = |p: &std::path::Path| p.display().to_string().replace('\'', "''");
-                let script = format!("Start-Process -FilePath '{}' -WorkingDirectory '{}' -ArgumentList '/DIR=\"{}\"' -Verb RunAs -Wait",
-                    q(&setup), q(setup.parent().unwrap()), q(&target));
-                let mut c = tokio::process::Command::new("powershell");
-                c.args(["-NoProfile", "-NonInteractive", "-Command", &script]);
-                extract::quiet(&mut c);
-                let out = c.output().await?;
-                if !out.status.success() {
-                    let e = String::from_utf8_lossy(&out.stderr);
-                    bail!("the installer did not run{}", if e.contains("canceled by the user") { " (the admin prompt was declined)" } else { "" });
+                let _assist = crate::assist::start(setup.parent().map(|p| p.to_path_buf()).unwrap_or_default());
+                if admin {
+                    // Start-Process -Verb RunAs shows the UAC prompt; -Wait returns when the installer closes.
+                    let q = |p: &std::path::Path| p.display().to_string().replace('\'', "''");
+                    let script = format!("Start-Process -FilePath '{}' -WorkingDirectory '{}' -ArgumentList '/DIR=\"{}\"' -Verb RunAs -Wait",
+                        q(&setup), q(setup.parent().unwrap()), q(&target));
+                    let mut c = tokio::process::Command::new("powershell");
+                    c.args(["-NoProfile", "-NonInteractive", "-Command", &script]);
+                    extract::quiet(&mut c);
+                    let out = c.output().await?;
+                    if !out.status.success() {
+                        let e = String::from_utf8_lossy(&out.stderr);
+                        bail!("the installer did not run{}", if e.contains("canceled by the user") { " (the admin prompt was declined)" } else { "" });
+                    }
+                } else {
+                    let mut c = tokio::process::Command::new(&setup);
+                    c.current_dir(setup.parent().unwrap()).env("__COMPAT_LAYER", "RunAsInvoker");
+                    c.raw_arg(format!("/DIR=\"{}\"", target.display()));
+                    let mut child = c.spawn().map_err(|e| anyhow!("the installer did not start: {e}"))?;
+                    child.wait().await?;
                 }
                 let cands = install::find_game_exe(&target, &job.name);
                 let exe = cands.first().filter(|c| c.score > -500).map(|c| c.path.clone())

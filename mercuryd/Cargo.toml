@@ -23,7 +23,7 @@ tower-http = { version = "0.6", features = ["cors"] }
 [target.'cfg(windows)'.dependencies]
 tokio-tungstenite = "0.24"
 rusqlite = { version = "0.32", features = ["bundled", "backup"] }
-windows-sys = { version = "0.59", features = ["Win32_Storage_FileSystem", "Win32_Foundation", "Win32_System_Threading"] }
+windows-sys = { version = "0.59", features = ["Win32_Storage_FileSystem", "Win32_Foundation", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Input_XboxController"] }
 
 [profile.release]
 strip = true
