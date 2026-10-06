@@ -423,7 +423,29 @@ async fn delete_installer_files(State(a): State<App>, Path(id): Path<u32>) -> R 
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt().with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "mercuryd=info".into())).init();
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "mercuryd=info".into());
+    // Windows: always keep a log file. Started by Mercury the engine's output is already piped to mercuryd.log; started
+    // any other way (a scheduled task, the installer) it would otherwise have nowhere to write.
+    #[cfg(windows)]
+    {
+        let _ = std::fs::create_dir_all(config::data_dir());
+        match std::fs::OpenOptions::new().create(true).append(true).open(config::data_dir().join("engine.log")) {
+            Ok(f) => tracing_subscriber::fmt().with_env_filter(filter).with_ansi(false).with_writer(Mutex::new(f)).init(),
+            Err(_) => tracing_subscriber::fmt().with_env_filter(filter).init(),
+        }
+    }
+    #[cfg(not(windows))]
+    tracing_subscriber::fmt().with_env_filter(filter).init();
+    #[cfg(windows)]
+    {
+        let args: Vec<String> = std::env::args().collect();
+        if let Some(i) = args.iter().position(|a| a == "--assist") {
+            let dir = std::path::PathBuf::from(args.get(i + 1).cloned().unwrap_or_default());
+            let parent = args.get(i + 2).and_then(|p| p.parse().ok()).unwrap_or(0);
+            assist::helper_main(dir, parent);
+            return Ok(());
+        }
+    }
     let http = reqwest::Client::builder().user_agent("Mercury/0.1").connect_timeout(std::time::Duration::from_secs(15)).build()?;
     let cfg = Arc::new(Mutex::new(config::Config::load()));
     let m = jobs::Manager::new(http, cfg);

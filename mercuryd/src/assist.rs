@@ -15,6 +15,48 @@ use windows_sys::Win32::{
 pub struct Assist(Arc<AtomicBool>);
 impl Drop for Assist { fn drop(&mut self) { self.0.store(true, Ordering::Relaxed); } }
 
+/// How the helper runs: elevated in its own process (so it can drive installers that restarted themselves as admin),
+/// or inside the engine if that process could not be started.
+pub enum Guard { InProc(Assist), Helper(PathBuf) }
+impl Drop for Guard { fn drop(&mut self) { if let Guard::Helper(p) = self { let _ = std::fs::write(p, b"stop"); } } }
+
+fn stop_file() -> PathBuf { std::env::temp_dir().join("mercury-assist.stop") }
+
+/// Start the elevated helper (`mercuryd.exe --assist <dir> <engine pid>`); fall back to helping from inside the engine.
+pub fn spawn(setup_dir: PathBuf) -> Guard {
+    let stop = stop_file();
+    let _ = std::fs::remove_file(&stop);
+    if let Ok(exe) = std::env::current_exe() {
+        let q = |s: &str| s.replace('\'', "''");
+        let script = format!("Start-Process -FilePath '{}' -ArgumentList '--assist','\"{}\"','{}' -Verb RunAs -WindowStyle Hidden",
+            q(&exe.display().to_string()), q(&setup_dir.display().to_string()), std::process::id());
+        let mut c = std::process::Command::new("powershell");
+        c.args(["-NoProfile", "-NonInteractive", "-Command", &script]);
+        std::os::windows::process::CommandExt::creation_flags(&mut c, 0x0800_0000);
+        if c.spawn().is_ok() { tracing::info!("assist: started the elevated helper"); return Guard::Helper(stop); }
+    }
+    tracing::warn!("assist: could not start the elevated helper; helping from the engine (cannot drive admin installers)");
+    Guard::InProc(start(setup_dir))
+}
+
+/// Entry point of the elevated helper process.
+pub fn helper_main(dir: PathBuf, parent: u32) {
+    let stop = Arc::new(AtomicBool::new(false));
+    let s = stop.clone();
+    let file = stop_file();
+    std::thread::spawn(move || loop {
+        let alive = unsafe {
+            let h = OpenProcess(0x0010_0000 /* SYNCHRONIZE */, 0, parent);
+            let a = !h.is_null() && windows_sys::Win32::System::Threading::WaitForSingleObject(h, 0) != 0;
+            if !h.is_null() { CloseHandle(h); }
+            a
+        };
+        if file.exists() || !alive { s.store(true, Ordering::Relaxed); break; }
+        std::thread::sleep(Duration::from_millis(500));
+    });
+    run(&dir, &stop);
+}
+
 /// Start helping with the installer whose files are in `setup_dir`. Stops when the returned guard is dropped.
 pub fn start(setup_dir: PathBuf) -> Assist {
     let stop = Arc::new(AtomicBool::new(false));

@@ -334,7 +334,7 @@ impl Manager {
         let me = self.clone();
         tokio::spawn(async move {
             let res: Result<()> = async {
-                let _assist = crate::assist::start(setup.parent().map(|p| p.to_path_buf()).unwrap_or_default());
+                let _assist = crate::assist::spawn(setup.parent().map(|p| p.to_path_buf()).unwrap_or_default());
                 if admin {
                     // Start-Process -Verb RunAs shows the UAC prompt; -Wait returns when the installer closes.
                     let q = |p: &std::path::Path| p.display().to_string().replace('\'', "''");
