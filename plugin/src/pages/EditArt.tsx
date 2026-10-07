@@ -19,6 +19,7 @@ export function EditArt() {
   const [name, setName] = useState<string>();
   const [picked, setPicked] = useState<Record<number, SgdbOpt>>({});
   const [busy, setBusy] = useState(false);
+  const [sgdbName, setSgdbName] = useState("");
 
   if (!lib) return <div style={page}><div style={{ padding: 48, color: C.dim }}>Loading…</div></div>;
   if (!entry) return <div style={page}><FocusStyle /><div style={{ padding: 28 }}><div style={{ color: C.dim, marginBottom: 14 }}>This game is not installed with Mercury.</div>
@@ -26,7 +27,7 @@ export function EditArt() {
 
   const title = name ?? entry.name;
   const changed = Object.keys(picked).length > 0 || title.trim() !== entry.name;
-  const choose = (s: Slot) => showModal(<ArtPicker appid={appid} s={s} name={entry.name} onPick={(o) =>
+  const choose = (s: Slot) => showModal(<ArtPicker appid={appid} s={s} name={entry.name} search={sgdbName} onPick={(o) =>
     setPicked((p) => ({ ...p, [s.slot]: o ?? { url: "default", thumb: cdn(appid, s.file), score: 0, width: 0, height: 0, author: "" } }))} />);
   const save = async () => {
     setBusy(true);
@@ -48,6 +49,7 @@ export function EditArt() {
         <div style={{ fontSize: 18, fontWeight: 700, color: "#fff" }}>Edit artwork</div>
         <div style={{ fontSize: 12, color: C.dim, margin: "2px 0 10px" }}>Pick a slot to replace it. Only the slots you change are sent to Steam.</div>
         <TextField label="Title in Steam" value={title} onChange={(e) => setName(e.target.value)} />
+        <TextField label="Search SteamGridDB as" description="Leave empty to match by the Steam game. Type another name if SteamGridDB lists it differently." value={sgdbName} onChange={(e) => setSgdbName(e.target.value)} />
         <Focusable flow-children="horizontal" style={{ display: "flex", gap: 14, margin: "14px 0", alignItems: "flex-end" }}>
           {SLOTS.map((s) => {
             const o = picked[s.slot];

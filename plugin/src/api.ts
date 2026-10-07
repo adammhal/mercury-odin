@@ -55,7 +55,13 @@ export const api = {
   search: (q: string) => req<App[]>(`/steam/search?q=${encodeURIComponent(q)}`),
   app: (id: number) => req<App>(`/steam/app/${id}`),
   art: (id: number) => req<{ assets: [number, string, string][]; icon?: string | null }>(`/steam/art/${id}`),
-  sgdb: (appid: number, slot: number, name?: string) => req<{ options: SgdbOpt[] }>(`/sgdb/${appid}/${slot}${name ? `?name=${encodeURIComponent(name)}` : ""}`),
+  /** `search`: a name to look up on SteamGridDB instead of the Steam app id. */
+  sgdb: (appid: number, slot: number, name?: string, search?: string) => {
+    const q = new URLSearchParams();
+    if (name) q.set("name", name);
+    if (search?.trim()) q.set("search", search.trim());
+    return req<{ options: SgdbOpt[]; game?: string }>(`/sgdb/${appid}/${slot}${q.toString() ? `?${q}` : ""}`);
+  },
   editArt: (appid: number, body: { name?: string; art: Record<string, string> }) =>
     req<{ ok: boolean; changed: boolean; name?: string | null; assets?: [number, string, string][]; shortcut_id?: number }>(`/library/${appid}/art`, "POST", body),
   renamed: (appid: number, name: string) => req<unknown>(`/library/${appid}/renamed`, "POST", { name }),

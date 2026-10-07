@@ -25,17 +25,19 @@ export function Art({ src, s, tile }: { src: string; s: Slot; tile?: { w: number
 }
 
 /** Choose one SteamGridDB image for a slot. The first tile keeps Steam's own store art. */
-export function ArtPicker({ appid, s, name, onPick, closeModal }: { appid: number; s: Slot; name?: string; onPick: (o: SgdbOpt | null) => void; closeModal?: () => void }) {
+export function ArtPicker({ appid, s, name, search, onPick, closeModal }: { appid: number; s: Slot; name?: string; search?: string; onPick: (o: SgdbOpt | null) => void; closeModal?: () => void }) {
   const [opts, setOpts] = useState<SgdbOpt[]>();
+  const [game, setGame] = useState<string>();
   const [err, setErr] = useState<string>();
-  useEffect(() => { api.sgdb(appid, s.slot, name).then((r) => setOpts(r.options), (e) => setErr(e.message)); }, []);
+  useEffect(() => { api.sgdb(appid, s.slot, name, search).then((r) => { setOpts(r.options); setGame(r.game); }, (e) => setErr(e.message)); }, []);
   const scale = s.slot === 0 ? 0.9 : s.slot === 1 ? 0.8 : 0.9;
   const tile = { w: Math.round(s.w * scale), h: Math.round(s.h * scale) };
   const pick = (o: SgdbOpt | null) => { closeModal?.(); onPick(o); };
   return (
     <ModalRoot closeModal={closeModal}>
       <div style={{ width: 760, maxWidth: "96%", background: "#171d25", borderRadius: 6, padding: "16px 18px" }}>
-        <div style={{ fontSize: 16, fontWeight: 700, color: "#fff", marginBottom: 10 }}>Choose {s.label.toLowerCase()} art</div>
+        <div style={{ fontSize: 16, fontWeight: 700, color: "#fff", marginBottom: game ? 2 : 10 }}>Choose {s.label.toLowerCase()} art</div>
+        {game && <div style={{ fontSize: 12, color: C.dim, marginBottom: 10 }}>SteamGridDB game: {game}. Wrong game? Close this and type its name in "Search SteamGridDB as".</div>}
         {err && <div style={{ color: C.bad, fontSize: 13, marginBottom: 8 }}>{err}</div>}
         {!opts && !err && <div style={{ display: "flex", alignItems: "center", gap: 8, color: C.dim }}><Spinner style={{ width: 18, height: 18 }} /> Loading SteamGridDB…</div>}
         <Focusable flow-children="grid" style={{ display: "flex", flexWrap: "wrap", gap: 10, maxHeight: 340, overflowY: "auto", padding: 4, scrollPaddingBottom: 12 }}>
@@ -62,6 +64,7 @@ export function Review() {
   const [name, setName] = useState<string>();
   const [picked, setPicked] = useState<Record<number, SgdbOpt>>({});
   const [busy, setBusy] = useState(false);
+  const [sgdbName, setSgdbName] = useState("");
   useEffect(() => { if (job && name === undefined) setName(job.name.replace(/[\u2122\u00ae\u00a9]/g, "").trim()); }, [job?.id]);
 
   if (!jobs) return <div style={page}><div style={{ padding: 48, color: C.dim }}>Loading…</div></div>;
@@ -72,7 +75,7 @@ export function Review() {
     </div></div>
   );
 
-  const choose = (s: Slot) => showModal(<ArtPicker appid={job.appid} s={s} name={job.name} onPick={(o) => setPicked((p) => { const n = { ...p }; if (o) n[s.slot] = o; else delete n[s.slot]; return n; })} />);
+  const choose = (s: Slot) => showModal(<ArtPicker appid={job.appid} s={s} name={job.name} search={sgdbName} onPick={(o) => setPicked((p) => { const n = { ...p }; if (o) n[s.slot] = o; else delete n[s.slot]; return n; })} />);
   const confirm = async () => {
     setBusy(true);
     try {
@@ -91,6 +94,7 @@ export function Review() {
         <div style={{ fontSize: 18, fontWeight: 700, color: "#fff" }}>Review before adding to Steam</div>
         <div style={{ fontSize: 12, color: C.dim, margin: "2px 0 10px" }}>{job.name} is installed. Check the title and artwork, change what you like, then confirm.</div>
         <TextField label="Title in Steam" value={name ?? ""} onChange={(e) => setName(e.target.value)} />
+        <TextField label="Search SteamGridDB as" description="Leave empty to match by the Steam game. Type another name if SteamGridDB lists it differently." value={sgdbName} onChange={(e) => setSgdbName(e.target.value)} />
         <Focusable flow-children="horizontal" style={{ display: "flex", gap: 14, margin: "14px 0", alignItems: "flex-end" }}>
           {SLOTS.map((s) => {
             const o = picked[s.slot];
