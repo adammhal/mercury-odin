@@ -29,29 +29,32 @@ async fn get(http: &reqwest::Client, key: &str, path: &str) -> Result<Value> {
     Ok(r.json().await?)
 }
 
-/// SteamGridDB's id for a game: by Steam app id, or (when it does not know that id) by searching its name.
-async fn game_id(http: &reqwest::Client, key: &str, appid: u32, name: Option<&str>, by_name: bool) -> Result<(u64, String)> {
-    if !by_name {
+/// SteamGridDB's id and name for a game: by Steam app id, or (when it does not know that id) by searching its name.
+/// `search`: the user typed a name to look up instead, for games SteamGridDB lists under a different title.
+async fn game_id(http: &reqwest::Client, key: &str, appid: u32, name: Option<&str>, search: Option<&str>) -> Result<(u64, String)> {
+    let search = search.map(str::trim).filter(|s| !s.is_empty());
+    if search.is_none() {
         if let Ok(g) = get(http, key, &format!("/games/steam/{appid}")).await {
-            if let Some(id) = g["data"]["id"].as_u64() { return Ok((id, g["data"]["name"].as_str().unwrap_or_default().to_string())); }
+            if let Some(id) = g["data"]["id"].as_u64() { return Ok((id, g["data"]["name"].as_str().unwrap_or("").to_string())); }
         }
     }
-    let name = name.map(str::trim).filter(|n| !n.is_empty()).ok_or_else(|| anyhow!("SteamGridDB does not know this game"))?;
+    let name = search.or(name.map(str::trim).filter(|n| !n.is_empty())).ok_or_else(|| anyhow!("SteamGridDB does not know this game"))?;
     let hits = get(http, key, &format!("/search/autocomplete/{}", urlencoding::encode(name))).await?;
     let norm = |s: &str| s.chars().filter(|c| c.is_alphanumeric()).collect::<String>().to_lowercase();
     let list = hits["data"].as_array().cloned().unwrap_or_default();
     let exact = list.iter().find(|h| h["name"].as_str().is_some_and(|n| norm(n) == norm(name)));
-    // An automatic lookup only accepts a real match (the same name, or one containing the other); a search the user typed
+    // An automatic lookup only accepts a real match (the same name, or one containing the other); a name the user typed
     // takes SteamGridDB's best guess, and the picker shows which game it found.
     let close = list.iter().find(|h| h["name"].as_str().is_some_and(|n| { let (a, b) = (norm(n), norm(name)); !a.is_empty() && (a.contains(&b) || b.contains(&a)) }));
-    exact.or(close).or(if by_name { list.first() } else { None })
-        .and_then(|h| Some((h["id"].as_u64()?, h["name"].as_str().unwrap_or_default().to_string()))).ok_or_else(|| anyhow!("SteamGridDB has nothing for \"{name}\""))
+    exact.or(close).or(if search.is_some() { list.first() } else { None })
+        .and_then(|h| Some((h["id"].as_u64()?, h["name"].as_str().unwrap_or("").to_string())))
+        .ok_or_else(|| anyhow!("SteamGridDB has nothing for \"{name}\""))
 }
 
-/// `by_name` searches SteamGridDB for `name` instead of using the Steam app id. Returns the images and the game they are for.
-pub async fn options(http: &reqwest::Client, key: &str, appid: u32, slot: u8, name: Option<&str>, by_name: bool) -> Result<(Vec<Opt>, String)> {
+/// Images for `slot`, best first, and the name of the SteamGridDB game they belong to.
+pub async fn options(http: &reqwest::Client, key: &str, appid: u32, slot: u8, name: Option<&str>, search: Option<&str>) -> Result<(Vec<Opt>, String)> {
     let (kind, extra) = endpoint(slot)?;
-    let (id, game) = game_id(http, key, appid, name, by_name).await?;
+    let (id, game) = game_id(http, key, appid, name, search).await?;
     let mut list = get(http, key, &format!("/{kind}/game/{id}?nsfw=false&humor=any&epilepsy=any{extra}")).await?;
     let mut out: Vec<Opt> = list["data"].as_array_mut().map(std::mem::take).unwrap_or_default().iter().filter_map(|o| Some(Opt {
         url: o["url"].as_str()?.to_string(),
