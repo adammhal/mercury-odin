@@ -138,7 +138,8 @@ function startWatcher() {
   });
   const stopBattery = fillChargingTime();
   const stopReconnect = reconnectAfterSleep();
-  return () => { clearInterval(timer); clearInterval(daily); stopExit(); stopStoreButton(); stopBattery(); stopReconnect(); };
+  const stopAutoPerf = performanceWhenPlugged();
+  return () => { clearInterval(timer); clearInterval(daily); stopExit(); stopStoreButton(); stopBattery(); stopReconnect(); stopAutoPerf(); };
 }
 
 /** Two gaps in what Steam's client reports on this device, filled from the kernel:
@@ -196,6 +197,39 @@ function reconnectAfterSleep(): () => void {
     if (now - last > 30000 && !busy) cycle();
     last = now;
   }, 5000);
+  return () => clearInterval(t);
+}
+
+/** Performance profile on a charger or the dock's display; the previous profile back when unplugged, unless the
+ * user picked another one meanwhile. Set through Steam's own setting (as Quick Access does): Steam keeps its own copy
+ * and pushes it to Armada, so changing Armada's side directly leaves Quick Access wrong and gets overwritten. */
+function performanceWhenPlugged(): () => void {
+  const KEY = "mercury.profileBeforePlug";
+  const current = (): string | undefined => (window as any).settingsStore?.clientSettings?.steamos_platform_performance_profile;
+  const setProfile = (name: string) => {
+    // CMsgClientSettings field 22010 (steamos_platform_performance_profile), a string, protobuf-encoded.
+    const varint = (n: number) => { const o: number[] = []; while (n > 127) { o.push((n & 127) | 128); n >>>= 7; } o.push(n); return o; };
+    const s = Array.from(new TextEncoder().encode(name));
+    const bytes = [...varint((22010 << 3) | 2), ...varint(s.length), ...s];
+    return SteamClient.Settings.SetSetting(btoa(String.fromCharCode(...bytes)));
+  };
+  let last: boolean | undefined;
+  const check = async () => {
+    let plugged: boolean;
+    try { plugged = (await api.battery()).plugged; } catch { return; }
+    const cur = current();
+    if (!cur || plugged === last) return;
+    if (plugged) {
+      if (cur !== "Performance") { localStorage.setItem(KEY, cur); await setProfile("Performance"); console.log("[Mercury] plugged in: Performance"); }
+    } else if (last !== undefined) {
+      const before = localStorage.getItem(KEY);
+      if (before && cur === "Performance") { await setProfile(before); console.log("[Mercury] unplugged:", before); }
+      localStorage.removeItem(KEY);
+    }
+    last = plugged;
+  };
+  const t = setInterval(check, 3000);
+  check();
   return () => clearInterval(t);
 }
 
