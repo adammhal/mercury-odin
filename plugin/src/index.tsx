@@ -137,7 +137,8 @@ function startWatcher() {
     catch (e: any) { toaster.toast({ title: "Mercury", body: e.message }); }
   });
   const stopBattery = fillChargingTime();
-  return () => { clearInterval(timer); clearInterval(daily); stopExit(); stopStoreButton(); stopBattery(); };
+  const stopReconnect = reconnectAfterSleep();
+  return () => { clearInterval(timer); clearInterval(daily); stopExit(); stopStoreButton(); stopBattery(); stopReconnect(); };
 }
 
 /** Two gaps in what Steam's client reports on this device, filled from the kernel:
@@ -166,6 +167,36 @@ function fillChargingTime(): () => void {
   const t = setInterval(fill, 15000);
   fill();
   return () => { clearInterval(t); h?.unregister?.(); };
+}
+
+/** After the Odin wakes, Steam logs back in on its own but the new connection can be half dead: it reports
+ * "Logged On" while its requests (cloud sync, stats) keep failing, and Reconnect() is ignored in that state.
+ * Going offline and back online gives it a fresh connection. Sleep freezes Steam, so a long gap between timer
+ * ticks means the Odin was asleep. */
+function reconnectAfterSleep(): () => void {
+  let last = Date.now();
+  let busy = false;
+  const cycle = async () => {
+    busy = true;
+    try {
+      // Wait for Wi-Fi to come back (up to 2 minutes), then give Steam's own logon a moment.
+      for (let i = 0; i < 60 && !navigator.onLine; i++) await new Promise((r) => setTimeout(r, 2000));
+      await new Promise((r) => setTimeout(r, 15000));
+      console.log("[Mercury] woke from sleep; refreshing Steam's connection");
+      await SteamClient.User.GoOffline();
+      await new Promise((r) => setTimeout(r, 4000));
+      await SteamClient.User.GoOnline();
+    } catch (e: any) {
+      console.log("[Mercury] reconnect after sleep failed", e?.message);
+      try { await SteamClient.User.GoOnline(); } catch { /* Steam is reconnecting on its own */ }
+    } finally { busy = false; }
+  };
+  const t = setInterval(() => {
+    const now = Date.now();
+    if (now - last > 30000 && !busy) cycle();
+    last = now;
+  }, 5000);
+  return () => clearInterval(t);
 }
 
 export default definePlugin(() => {
