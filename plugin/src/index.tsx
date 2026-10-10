@@ -228,9 +228,15 @@ function performanceWhenPlugged(): () => void {
     }
     last = plugged;
   };
-  const t = setInterval(check, 3000);
+  // React at once when Steam sees the charger come or go; the slow poll catches the dock's display on its own.
+  let ac: unknown;
+  const fast = setInterval(() => {
+    const now = (window as any).SystemPowerStore?.m_eACState;
+    if (now !== ac) { ac = now; check(); }
+  }, 1000);
+  const t = setInterval(check, 15000);
   check();
-  return () => clearInterval(t);
+  return () => { clearInterval(fast); clearInterval(t); };
 }
 
 export default definePlugin(() => {
