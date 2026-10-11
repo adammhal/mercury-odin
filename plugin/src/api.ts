@@ -20,7 +20,7 @@ export type Entry = { appid: number; name: string; dir: string; exe: string; sho
 export type Location = { label: string; path: string; free: number; total: number; default: boolean };
 export type SteamShortcut = { appid: number; name: string; exe: string; start_dir: string; launch_options: string };
 export type Status = { version: string; rd_key_set: boolean; unrar: boolean; installer_launch_options?: string | null; storage: { total: number; free: number; mercury: number } };
-export type Config = { browser_shortcut_id?: number | null; sgdb_key?: string; sgdb_key_set?: boolean; review_art?: boolean; launcher?: string; rd_key: string; rd_key_set: boolean; games_dir: string; downloads_dir: string; server_url: string; enable_steamrip: boolean; proton_tool: string; launch_options: string };
+export type Config = { browser_shortcut_id?: number | null; sgdb_key?: string; sgdb_key_set?: boolean; review_art?: boolean; charge_limit?: boolean; launcher?: string; rd_key: string; rd_key_set: boolean; games_dir: string; downloads_dir: string; server_url: string; enable_steamrip: boolean; proton_tool: string; launch_options: string };
 export type SgdbOpt = { url: string; thumb: string; score: number; width: number; height: number; author: string };
 
 /** Rejects if `p` has not settled after `ms`. Nothing Mercury waits on may hang forever. */

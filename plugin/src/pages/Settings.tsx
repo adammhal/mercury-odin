@@ -54,6 +54,10 @@ export function Settings() {
           <ToggleField label="Review before adding to Steam" description="After a game installs, check its title and choose SteamGridDB art before it goes to Steam. Off: it is added right away with Steam's art."
             checked={cfg.review_art ?? true} onChange={(v) => save({ review_art: v })} />
         </PanelSection>
+        <PanelSection title="Battery">
+          <ToggleField label="Limit charging to 80%" description="Slows battery wear when the Odin lives on the dock or charger. Charging stops at 80% and resumes below 77%. Turn it off before a trip to charge to 100%."
+            checked={cfg.charge_limit ?? false} onChange={(v) => save({ charge_limit: v })} />
+        </PanelSection>
         <PanelSection title="Games">
           <Field label="Proton for new games" childrenLayout="below">
             <Dropdown rgOptions={PROTONS} selectedOption={cfg.proton_tool} onChange={(o) => save({ proton_tool: o.data })} />

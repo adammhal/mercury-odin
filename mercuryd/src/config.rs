@@ -25,6 +25,9 @@ pub struct Config {
     pub steam_self_id: Option<u32>,
     /// Ask to confirm the title and artwork before a finished game goes to Steam.
     pub review_art: bool,
+    /// Odin: stop charging at 80 % to slow battery wear when it lives on the dock. Applied by the root
+    /// battery-led service, which reads this file (the engine cannot write the charger settings).
+    pub charge_limit: bool,
 }
 
 impl Default for Config {
@@ -47,6 +50,7 @@ impl Default for Config {
             launcher: "steam".into(),
             steam_self_id: None,
             review_art: true,
+            charge_limit: false,
         }
     }
 }
