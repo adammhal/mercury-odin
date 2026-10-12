@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { api } from "./api";
 import { cancelBrowserDownload, pending } from "./browser";
 import { usePoll } from "./hooks";
-import { C, JobProgress } from "./ui";
+import { C, confirmRebootAndroid, JobProgress } from "./ui";
 
 const storeApp = callable<[], number>("store_app");
 
@@ -52,6 +52,7 @@ export function Panel() {
         {active.map((j) => <PanelSectionRow key={j.id}><JobProgress job={j} /></PanelSectionRow>)}
         {jobs && !active.length && <PanelSectionRow><div style={{ color: C.dim, fontSize: 12 }}>Nothing downloading.</div></PanelSectionRow>}
         <PanelSectionRow><ButtonItem layout="below" onClick={() => go("/mercury")}>Open Mercury</ButtonItem></PanelSectionRow>
+        <PanelSectionRow><ButtonItem layout="below" onClick={confirmRebootAndroid}>Restart into Android</ButtonItem></PanelSectionRow>
         {active.length > 0 && <PanelSectionRow><ButtonItem layout="below" onClick={() => go("/mercury/downloads")}>All downloads</ButtonItem></PanelSectionRow>}
       </PanelSection>
     </>

@@ -1,6 +1,7 @@
-import { Field, Focusable, ProgressBar } from "@decky/ui";
+import { ConfirmModal, Field, Focusable, ProgressBar, showModal } from "@decky/ui";
+import { toaster } from "@decky/api";
 import { CSSProperties, ReactNode, useEffect, useState } from "react";
-import { bytes, cdn, Job, jobPercent, STATE_LABEL } from "./api";
+import { api, bytes, cdn, Job, jobPercent, STATE_LABEL } from "./api";
 
 export const C = { bg: "#0e141b", panel: "#1f242c", panel2: "#2a303a", text: "#dcdedf", dim: "#8b929a", accent: "#1a9fff", ok: "#a6ec6b", warn: "#f2c35b", bad: "#ff6b6b" };
 
@@ -74,4 +75,11 @@ export function Cover({ app, width, radius = 6 }: { app: { appid: number; name: 
         : <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", padding: 8, textAlign: "center", fontSize: 12, color: C.dim }}>{app.name}</div>}
     </div>
   );
+}
+
+/** Confirm, then restart into Android. The switch stays on Android; coming back is the Volume Down boot menu. */
+export function confirmRebootAndroid() {
+  showModal(<ConfirmModal strTitle="Restart into Android?" strOKButtonText="Restart"
+    strDescription="The Odin restarts into Android and keeps booting Android. To come back to Armada, hold Volume Down while it restarts and pick Linux in the boot menu. Save your game first."
+    onOK={async () => { try { await api.rebootAndroid(); } catch (e: any) { toaster.toast({ title: "Mercury", body: e.message }); } }} />);
 }

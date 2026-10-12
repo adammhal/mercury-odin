@@ -1,0 +1,34 @@
+#!/bin/sh
+# Restart the Odin into Android: set the bootloader's BootMode to Android (1) in the devinfo partition, then reboot.
+# Armada's bootloader (ROCKNIX ABL 1.1.8) keeps named settings there; BootMode's value is one byte at 0xA92
+# (0 = Linux, 1 = Android). Same change as the Volume Down boot menu. It stays on Android until switched back
+# there (Volume Down at boot, then pick Linux).
+# Refuses to write unless the layout matches exactly, keeps a backup, verifies the write and restores on mismatch.
+# --check: verify only, change nothing.
+set -u
+DEV=/dev/disk/by-partlabel/devinfo
+BAK=/var/lib/boot-switch/devinfo.bak
+OFF=$((0xa92))
+log() { echo "boot-switch: $*"; logger -t boot-switch -- "$*"; }
+hex() { dd if="$DEV" bs=1 skip=$(( $1 )) count="$2" status=none | od -A n -t x1 -v | tr -d ' \n'; }
+
+[ -b "$DEV" ] || { log "no devinfo partition"; exit 1; }
+# ANDROID-BOOT! magic, then the BootMode and BootSourceMode entries exactly where ABL 1.1.8 puts them.
+[ "$(hex 0x0 13)" = "414e44524f49442d424f4f5421" ] || { log "devinfo magic mismatch; not touching it"; exit 1; }
+[ "$(hex 0xa54 15)" = "010008000100426f6f744d6f646500" ] || { log "BootMode entry not where expected; not touching it"; exit 1; }
+[ "$(hex 0xab2 21)" = "01000e000100426f6f74536f757263654d6f646500" ] || { log "BootSourceMode entry not where expected; not touching it"; exit 1; }
+cur=$(hex $OFF 1)
+case "$cur" in 00|01) ;; *) log "BootMode has unexpected value $cur; not touching it"; exit 1 ;; esac
+[ "${1:-}" = --check ] && { log "layout OK, BootMode=$cur (00 Linux, 01 Android)"; exit 0; }
+
+mkdir -p "$(dirname "$BAK")"
+dd if="$DEV" of="$BAK" bs=4096 count=1 status=none || { log "backup failed"; exit 1; }
+printf '\001' | dd of="$DEV" bs=1 seek=$OFF count=1 conv=notrunc status=none
+sync
+if [ "$(hex $OFF 1)" != 01 ]; then
+  log "write did not verify; restoring backup"
+  dd if="$BAK" of="$DEV" bs=4096 count=1 conv=notrunc status=none; sync
+  exit 1
+fi
+log "BootMode set to Android; rebooting"
+systemctl reboot

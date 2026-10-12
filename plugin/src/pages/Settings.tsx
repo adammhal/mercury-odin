@@ -3,7 +3,7 @@ import { toaster } from "@decky/api";
 import { useEffect, useState } from "react";
 import { api, bytes, Config, Location } from "../api";
 import { usePoll } from "../hooks";
-import { Btn, C, FocusStyle, page } from "../ui";
+import { Btn, C, confirmRebootAndroid, FocusStyle, page } from "../ui";
 
 // Internal tool names as reported by SteamClient.Apps.GetAvailableCompatTools on the Odin (2026-10-01).
 // A wrong name makes Steam run the .exe natively with no error, so never guess these.
@@ -53,6 +53,9 @@ export function Settings() {
           </Focusable>
           <ToggleField label="Review before adding to Steam" description="After a game installs, check its title and choose SteamGridDB art before it goes to Steam. Off: it is added right away with Steam's art."
             checked={cfg.review_art ?? true} onChange={(v) => save({ review_art: v })} />
+        </PanelSection>
+        <PanelSection title="System">
+          <Btn style={{ width: 220 }} onClick={confirmRebootAndroid}>Restart into Android</Btn>
         </PanelSection>
         <PanelSection title="Battery">
           <ToggleField label="Limit charging to 80%" description="Slows battery wear when the Odin lives on the dock or charger. Charging stops at 80% and resumes below 77%. Turn it off before a trip to charge to 100%."

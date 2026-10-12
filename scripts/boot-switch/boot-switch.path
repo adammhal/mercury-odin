@@ -1,0 +1,8 @@
+[Unit]
+Description=Mercury's "Restart into Android" request
+
+[Path]
+PathExists=/var/home/armada/.local/share/mercury/reboot-android.request
+
+[Install]
+WantedBy=multi-user.target

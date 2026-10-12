@@ -1,0 +1,8 @@
+[Unit]
+Description=Restart into Android (set the bootloader's BootMode)
+
+[Service]
+Type=oneshot
+# Remove the request first so a failure cannot loop.
+ExecStartPre=/usr/bin/rm -f /var/home/armada/.local/share/mercury/reboot-android.request
+ExecStart=/var/lib/boot-switch/reboot-android

@@ -305,6 +305,14 @@ async fn launch_options(State(a): State<App>, Json(b): Json<ExeBody>) -> R {
 }
 async fn launch_options_set(State(a): State<App>, Path(appid): Path<u32>) -> R { a.m.launch_options_set(appid); Ok(Json(json!({ "ok": true }))) }
 
+/// Odin: ask the root boot-switch service (a systemd path unit watching this file) to set the bootloader to Android
+/// and restart. The engine runs unprivileged, so it only drops the request.
+async fn reboot_android() -> R {
+    if !std::path::Path::new("/etc/systemd/system/boot-switch.path").exists() { return Err(anyhow::anyhow!("The boot switch is not installed on this device").into()); }
+    std::fs::write(config::data_dir().join("reboot-android.request"), b"1")?;
+    Ok(Json(json!({ "ok": true })))
+}
+
 async fn repointed(State(a): State<App>, Path(appid): Path<u32>) -> R { a.m.repointed(appid); Ok(Json(json!({ "ok": true }))) }
 
 /// The user's non-Steam shortcuts that Mercury does not manage yet (candidates for adopting).
@@ -546,6 +554,7 @@ async fn main() -> anyhow::Result<()> {
     let app = Router::new()
         .route("/status", get(status))
         .route("/battery", get(|| async { Json(battery::read()) }))
+        .route("/system/reboot-android", post(reboot_android))
         .route("/config", get(get_config).put(put_config))
         .route("/rd/check", get(rd_check))
         .route("/steam/wishlist", get(wishlist))
