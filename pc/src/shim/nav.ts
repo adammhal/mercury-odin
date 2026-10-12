@@ -46,6 +46,7 @@ function move(dir: Dir) {
   const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
   const v = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] }[dir];
   let best: HTMLElement | null = null, bestScore = Infinity;
+  let inLine: HTMLElement | null = null, inLineAlong = Infinity;
   for (const el of items()) {
     if (el === from) continue;
     const q = el.getBoundingClientRect();
@@ -54,17 +55,30 @@ function move(dir: Dir) {
     if (along <= 2) continue;
     // Overlap on the cross axis (same row or column) is free, which keeps rows feeling like rows.
     const overlap = v[0] ? Math.min(r.bottom, q.bottom) - Math.max(r.top, q.top) : Math.min(r.right, q.right) - Math.max(r.left, q.left);
+    const size = v[0] ? Math.min(r.height, q.height) : Math.min(r.width, q.width);
+    // Something properly in line with where we are (the same row, or the same column) always wins over a nearer diagonal:
+    // from a wide key like Space, the next key along the row is further away than a key in the row above.
+    if (overlap > size * 0.4 && along < inLineAlong) { inLineAlong = along; inLine = el; }
     const side = overlap > 0 ? 0 : Math.abs(dx * v[1] + dy * v[0]);
     const score = along + side * 3;
     if (score < bestScore) { bestScore = score; best = el; }
   }
-  best?.focus();
+  (inLine ?? best)?.focus();
 }
 
 export function press(b: Button) {
   if (b === "up" || b === "down" || b === "left" || b === "right") return move(b);
   const el = current();
   if (b === "a") { el?.dispatchEvent(new CustomEvent("mercury-activate", { bubbles: false })); return; }
+  // An open modal can claim the other buttons (the on-screen keyboard uses them as shortcuts).
+  if (["x", "y", "lb", "rb", "start", "select"].includes(b)) {
+    const modal = scope();
+    if (modal !== document) {
+      const ev = new CustomEvent("mercury-button", { detail: b, cancelable: true });
+      modal.dispatchEvent(ev);
+      if (ev.defaultPrevented) return;
+    }
+  }
   if (b === "b") {
     const modal = scope();
     if (modal !== document) { (modal as HTMLElement).dispatchEvent(new CustomEvent("mercury-cancel")); return; }

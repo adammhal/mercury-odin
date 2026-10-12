@@ -25,22 +25,37 @@ export function Art({ src, s, tile }: { src: string; s: Slot; tile?: { w: number
 }
 
 /** Choose one SteamGridDB image for a slot. The first tile keeps Steam's own store art. */
+/** The last term typed per game, so every slot's picker starts with it. */
+const lastTerm: Record<number, string> = {};
+
 export function ArtPicker({ appid, s, name, search, onPick, closeModal }: { appid: number; s: Slot; name?: string; search?: string; onPick: (o: SgdbOpt | null) => void; closeModal?: () => void }) {
   const [opts, setOpts] = useState<SgdbOpt[]>();
-  const [game, setGame] = useState<string>();
   const [err, setErr] = useState<string>();
-  useEffect(() => { api.sgdb(appid, s.slot, name, search).then((r) => { setOpts(r.options); setGame(r.game); }, (e) => setErr(e.message)); }, []);
+  const [game, setGame] = useState<string>();
+  // SteamGridDB lists some games under a different name than the title saved in Steam, so the search term is separate.
+  // `search` is a term already typed on the page; otherwise the picker starts with the last term for this game, or the title.
+  const [term, setTerm] = useState(search?.trim() || lastTerm[appid] || name || "");
+  const load = (t: string, typed: boolean) => {
+    setOpts(undefined); setErr(undefined);
+    api.sgdb(appid, s.slot, name, typed ? t : undefined).then((r) => { setOpts(r.options); setGame(r.game); }, (e) => setErr(e.message));
+  };
+  useEffect(() => { load(term, !!(search?.trim() || lastTerm[appid])); }, []);
+  const doSearch = () => { lastTerm[appid] = term.trim(); load(term, true); };
   const scale = s.slot === 0 ? 0.9 : s.slot === 1 ? 0.8 : 0.9;
   const tile = { w: Math.round(s.w * scale), h: Math.round(s.h * scale) };
   const pick = (o: SgdbOpt | null) => { closeModal?.(); onPick(o); };
   return (
     <ModalRoot closeModal={closeModal}>
       <div style={{ width: 760, maxWidth: "96%", background: "#171d25", borderRadius: 6, padding: "16px 18px" }}>
-        <div style={{ fontSize: 16, fontWeight: 700, color: "#fff", marginBottom: game ? 2 : 10 }}>Choose {s.label.toLowerCase()} art</div>
-        {game && <div style={{ fontSize: 12, color: C.dim, marginBottom: 10 }}>SteamGridDB game: {game}. Wrong game? Close this and type its name in "Search SteamGridDB as".</div>}
+        <div style={{ fontSize: 16, fontWeight: 700, color: "#fff", marginBottom: 8 }}>Choose {s.label.toLowerCase()} art</div>
+        <Focusable flow-children="horizontal" style={{ display: "flex", gap: 10, alignItems: "flex-end", marginBottom: 8 }}>
+          <div style={{ flex: 1 }}><TextField label="Search SteamGridDB for" value={term} onChange={(e) => setTerm(e.target.value)} /></div>
+          <Btn style={{ width: 110, height: 34, marginBottom: 4 }} onClick={doSearch}>Search</Btn>
+        </Focusable>
+        {game && <div style={{ fontSize: 11, color: C.dim, marginBottom: 8 }}>Showing art for <b style={{ color: "#fff" }}>{game}</b></div>}
         {err && <div style={{ color: C.bad, fontSize: 13, marginBottom: 8 }}>{err}</div>}
         {!opts && !err && <div style={{ display: "flex", alignItems: "center", gap: 8, color: C.dim }}><Spinner style={{ width: 18, height: 18 }} /> Loading SteamGridDB…</div>}
-        <Focusable flow-children="grid" style={{ display: "flex", flexWrap: "wrap", gap: 10, maxHeight: 340, overflowY: "auto", padding: 4, scrollPaddingBottom: 12 }}>
+        <Focusable flow-children="grid" style={{ display: "flex", flexWrap: "wrap", gap: 10, maxHeight: 300, overflowY: "auto", padding: 4, scrollPaddingBottom: 12 }}>
           <Focusable autoFocus focusClassName={FOCUS} noFocusRing onActivate={() => pick(null)} onFocus={scrollIntoView} style={{ borderRadius: 4 }}>
             <div style={{ width: tile.w, height: tile.h, borderRadius: 4, background: C.panel2, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, color: "#fff", textAlign: "center", padding: 6, boxSizing: "border-box" }}>Steam&apos;s own art</div>
           </Focusable>
@@ -50,7 +65,7 @@ export function ArtPicker({ appid, s, name, search, onPick, closeModal }: { appi
             </Focusable>
           ))}
         </Focusable>
-        {opts && !opts.length && <div style={{ color: C.dim, fontSize: 13, marginTop: 8 }}>SteamGridDB has no {s.label.toLowerCase()} images for this game.</div>}
+        {opts && !opts.length && <div style={{ color: C.dim, fontSize: 13, marginTop: 8 }}>SteamGridDB has no {s.label.toLowerCase()} images for this search.</div>}
       </div>
     </ModalRoot>
   );
@@ -64,7 +79,6 @@ export function Review() {
   const [name, setName] = useState<string>();
   const [picked, setPicked] = useState<Record<number, SgdbOpt>>({});
   const [busy, setBusy] = useState(false);
-  const [sgdbName, setSgdbName] = useState("");
   useEffect(() => { if (job && name === undefined) setName(job.name.replace(/[\u2122\u00ae\u00a9]/g, "").trim()); }, [job?.id]);
 
   if (!jobs) return <div style={page}><div style={{ padding: 48, color: C.dim }}>Loading…</div></div>;
@@ -75,7 +89,7 @@ export function Review() {
     </div></div>
   );
 
-  const choose = (s: Slot) => showModal(<ArtPicker appid={job.appid} s={s} name={job.name} search={sgdbName} onPick={(o) => setPicked((p) => { const n = { ...p }; if (o) n[s.slot] = o; else delete n[s.slot]; return n; })} />);
+  const choose = (s: Slot) => showModal(<ArtPicker appid={job.appid} s={s} name={job.name} onPick={(o) => setPicked((p) => { const n = { ...p }; if (o) n[s.slot] = o; else delete n[s.slot]; return n; })} />);
   const confirm = async () => {
     setBusy(true);
     try {
@@ -94,7 +108,6 @@ export function Review() {
         <div style={{ fontSize: 18, fontWeight: 700, color: "#fff" }}>Review before adding to Steam</div>
         <div style={{ fontSize: 12, color: C.dim, margin: "2px 0 10px" }}>{job.name} is installed. Check the title and artwork, change what you like, then confirm.</div>
         <TextField label="Title in Steam" value={name ?? ""} onChange={(e) => setName(e.target.value)} />
-        <TextField label="Search SteamGridDB as" description="Leave empty to match by the Steam game. Type another name if SteamGridDB lists it differently." value={sgdbName} onChange={(e) => setSgdbName(e.target.value)} />
         <Focusable flow-children="horizontal" style={{ display: "flex", gap: 14, margin: "14px 0", alignItems: "flex-end" }}>
           {SLOTS.map((s) => {
             const o = picked[s.slot];

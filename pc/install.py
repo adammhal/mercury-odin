@@ -29,7 +29,9 @@ shutil.copy2(engine, os.path.join(DEST, "mercuryd.exe"))
 print("installed to", DEST)
 shutil.copytree(os.path.join(HERE, "art"), os.path.join(DEST, "art"), dirs_exist_ok=True)
 
-# Steam (Big Picture) is the launcher: start it at login in Big Picture, with the debug-port flag file Mercury needs.
+# Steam (Big Picture) is the launcher: open Big Picture at login. The URL (not -bigpicture) is used because Steam's own
+# "run at startup" entry starts it with -silent first, and a second instance ignores -bigpicture but does open the URL.
+# Start it at login in Big Picture, with the debug-port flag file Mercury needs.
 def steam_dir():
     for p in (os.path.join(os.environ.get("ProgramFiles(x86)", ""), "Steam"), r"C:\Program Files (x86)\Steam"):
         if os.path.isfile(os.path.join(p, "steam.exe")): return p
@@ -38,7 +40,7 @@ if steam:
     open(os.path.join(steam, ".cef-enable-remote-debugging"), "a").close()
     lnk = os.path.join(os.environ["APPDATA"], "Microsoft", "Windows", "Start Menu", "Programs", "Startup", "Steam Big Picture.lnk")
     subprocess.run(["powershell", "-NoProfile", "-Command",
-        f"$s=(New-Object -ComObject WScript.Shell).CreateShortcut('{lnk}'); $s.TargetPath='{steam}\\steam.exe'; $s.Arguments='-bigpicture'; $s.WorkingDirectory='{steam}'; $s.Save()"], check=True)
+        f"$s=(New-Object -ComObject WScript.Shell).CreateShortcut('{lnk}'); $s.TargetPath='{steam}\\steam.exe'; $s.Arguments='steam://open/bigpicture'; $s.WorkingDirectory='{steam}'; $s.Save()"], check=True)
     print("startup shortcut:", lnk)
     # Start the engine in the logged-in user's desktop session. A process started from SSH lands in a hidden session, and
     # the installers and prompts it opens would be invisible.
