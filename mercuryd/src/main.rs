@@ -91,6 +91,9 @@ async fn status(State(a): State<App>) -> R {
         "installer_launch_options": if cfg!(unix) { install::installer_fex_config().ok().map(|p| format!("PROTON_LOG=1 FEX_APP_CONFIG={} %command%", p.display())) } else { None },
         "storage": { "total": s.total, "free": s.free, "mercury": mercury },
         "platform": std::env::consts::OS,
+        "arch": std::env::consts::ARCH,
+        "browser": browser_command(),
+        "boot_switch": std::path::Path::new("/etc/systemd/system/boot-switch.path").exists(),
         "warmup": warmup_installed(),
         "launcher": c.launcher,
         "steam": steam_status(),
@@ -307,6 +310,14 @@ async fn launch_options_set(State(a): State<App>, Path(appid): Path<u32>) -> R {
 
 /// Odin: ask the root boot-switch service (a systemd path unit watching this file) to set the bootloader to Android
 /// and restart. The engine runs unprivileged, so it only drops the request.
+/// How to start Firefox for downloads Real-Debrid cannot fetch: the system one (Armada), else the Flatpak (SteamOS).
+fn browser_command() -> Value {
+    if std::path::Path::new("/usr/bin/firefox").exists() { return json!({ "exe": "/usr/bin/firefox", "args": "" }); }
+    let flatpak = ["/var/lib/flatpak/app/org.mozilla.firefox".into(), config::home().join(".local/share/flatpak/app/org.mozilla.firefox")];
+    if flatpak.iter().any(|p: &std::path::PathBuf| p.exists()) { return json!({ "exe": "/usr/bin/flatpak", "args": "run org.mozilla.firefox" }); }
+    Value::Null
+}
+
 async fn reboot_android() -> R {
     if !std::path::Path::new("/etc/systemd/system/boot-switch.path").exists() { return Err(anyhow::anyhow!("The boot switch is not installed on this device").into()); }
     std::fs::write(config::data_dir().join("reboot-android.request"), b"1")?;

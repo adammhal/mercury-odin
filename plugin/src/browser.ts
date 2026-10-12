@@ -26,7 +26,10 @@ async function browserShortcut(): Promise<number> {
   const cfg = await api.config();
   const id = cfg.browser_shortcut_id ?? 0;
   if (id && appStore?.GetAppOverviewByAppID?.(id)) return id;
-  const created = Number(await SteamClient.Apps.AddShortcut("Mercury Browser", "/usr/bin/firefox", "/var/home/armada/", ""));
+  const { browser } = await api.status();
+  if (!browser) throw new Error("Firefox is not installed. Install it from Discover (desktop mode), then try again.");
+  const exe = browser.exe;
+  const created = Number(await SteamClient.Apps.AddShortcut("Mercury Browser", exe, exe.slice(0, exe.lastIndexOf("/") + 1), ""));
   if (!created) throw new Error("Steam did not create the browser shortcut");
   SteamClient.Apps.SetShortcutName(created, "Mercury Browser");
   await api.saveConfig({ browser_shortcut_id: created });
@@ -41,7 +44,9 @@ export async function downloadInBrowser(appid: number, name: string, source: Sou
   const id = await browserShortcut();
   const gid = gameId(id);
   try { SteamClient.Apps.TerminateApp(gid, false); } catch { /* not running */ }
-  SteamClient.Apps.SetShortcutLaunchOptions(id, `MOZ_ENABLE_WAYLAND=0 %command% "${url}"`);
+  const { browser } = await api.status();
+  // The Flatpak Firefox (SteamOS) runs as "flatpak run org.mozilla.firefox <url>".
+  SteamClient.Apps.SetShortcutLaunchOptions(id, `MOZ_ENABLE_WAYLAND=0 %command% ${browser?.args ? browser.args + " " : ""}"${url}"`);
   setPending({ appid, name, source, since: Math.floor(Date.now() / 1000) - 5, shortcut: id, update });
   log("waiting for", name, "from", url);
   await new Promise((r) => setTimeout(r, 800));

@@ -180,6 +180,8 @@ mod tests {
 /// instead of its own path and failed with "path not found". Everything else stays at Armada's defaults.
 pub fn installer_fex_config() -> anyhow::Result<std::path::PathBuf> {
     use serde_json::{Value, json};
+    // Only x86 emulation (FEX on ARM) needs this; an x86 machine runs installers natively.
+    if !cfg!(target_arch = "aarch64") { anyhow::bail!("not an ARM device"); }
     let read = |p: &str| std::fs::read(p).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok());
     let mut cfg = read("/usr/share/fex-emu/Config.json").unwrap_or_else(|| json!({ "Config": {} }));
     if let Some(c) = cfg["Config"].as_object_mut() {

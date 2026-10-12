@@ -51,6 +51,9 @@ fn seven_zip() -> PathBuf {
     for p in [r"C:\Program Files\7-Zip\7z.exe", r"C:\Program Files (x86)\7-Zip\7z.exe"] {
         if Path::new(p).exists() { return PathBuf::from(p); }
     }
+    // The plugin package for machines without 7-Zip (SteamOS) ships 7-Zip's standalone 7zz next to mercuryd.
+    #[cfg(not(windows))]
+    if let Some(p) = std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.join("7zz"))).filter(|p| p.exists()) { return p; }
     PathBuf::from("7z")
 }
 

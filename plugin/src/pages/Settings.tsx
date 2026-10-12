@@ -7,17 +7,33 @@ import { Btn, C, confirmRebootAndroid, FocusStyle, page } from "../ui";
 
 // Internal tool names as reported by SteamClient.Apps.GetAvailableCompatTools on the Odin (2026-10-01).
 // A wrong name makes Steam run the .exe natively with no error, so never guess these.
-const PROTONS = [
+declare const SteamClient: any;
+// Used until Steam lists its compatibility tools (internal names: a wrong one runs the .exe natively, silently).
+const PROTONS_ARM = [
   { data: "proton-experimental-arm64", label: "Proton Experimental (ARM64)" },
   { data: "proton_11-arm64", label: "Proton 11.0 (ARM64)" },
   { data: "proton-cachyos-11.0-arm64", label: "Proton 11.0 CachyOS (ARM64)" },
 ];
+const PROTONS_X86 = [{ data: "proton_experimental", label: "Proton Experimental" }];
+
+/** Proton versions this Steam actually has, by their internal names. */
+function useProtons(arch?: string) {
+  const [list, setList] = useState<{ data: string; label: string }[]>();
+  useEffect(() => {
+    Promise.resolve(SteamClient.Apps.GetAvailableCompatTools(0)).then((tools: any[]) => {
+      const p = (tools ?? []).filter((t) => /proton/i.test(t.strToolName ?? "")).map((t) => ({ data: t.strToolName, label: t.strDisplayName || t.strToolName }));
+      if (p.length) setList(p);
+    }, () => {});
+  }, []);
+  return list ?? (arch === "aarch64" ? PROTONS_ARM : PROTONS_X86);
+}
 
 export function Settings() {
   const [cfg, setCfg] = useState<Config>();
   const [key, setKey] = useState("");
   const [sgdbKey, setSgdbKey] = useState("");
   const [status, , reloadStatus] = usePoll(api.status, 0);
+  const protons = useProtons(status?.arch);
   const [locs, , reloadLocs] = usePoll(api.locations, 0);
   useEffect(() => { api.config().then(setCfg, () => {}); }, []);
 
@@ -54,16 +70,16 @@ export function Settings() {
           <ToggleField label="Review before adding to Steam" description="After a game installs, check its title and choose SteamGridDB art before it goes to Steam. Off: it is added right away with Steam's art."
             checked={cfg.review_art ?? true} onChange={(v) => save({ review_art: v })} />
         </PanelSection>
-        <PanelSection title="System">
+        {status?.boot_switch && <PanelSection title="System">
           <Btn style={{ width: 220 }} onClick={confirmRebootAndroid}>Restart into Android</Btn>
-        </PanelSection>
+        </PanelSection>}
         <PanelSection title="Battery">
           <ToggleField label="Limit charging to 80%" description="Slows battery wear when the Odin lives on the dock or charger. Charging stops at 80% and resumes below 77%. Turn it off before a trip to charge to 100%."
             checked={cfg.charge_limit ?? false} onChange={(v) => save({ charge_limit: v })} />
         </PanelSection>
         <PanelSection title="Games">
           <Field label="Proton for new games" childrenLayout="below">
-            <Dropdown rgOptions={PROTONS} selectedOption={cfg.proton_tool} onChange={(o) => save({ proton_tool: o.data })} />
+            <Dropdown rgOptions={protons} selectedOption={cfg.proton_tool} onChange={(o) => save({ proton_tool: o.data })} />
           </Field>
           <Field label="Install new games on" description={`${cfg.games_dir}. Mount a Windows-formatted microSD card from Library, Import first.`} childrenLayout="below">
             <Dropdown rgOptions={(locs ?? []).map((l: Location) => ({ data: l.path, label: `${l.label} · ${bytes(l.free)} free` }))}

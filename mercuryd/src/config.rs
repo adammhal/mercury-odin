@@ -43,8 +43,12 @@ impl Default for Config {
             server_url: "https://mercury-server-production.up.railway.app".into(),
             steamrip_url: "https://adammhal.github.io/mercury-db/steamrip_data.json".into(),
             enable_steamrip: true,
-            proton_tool: "proton-experimental-arm64".into(),
-            launch_options: "/usr/libexec/armada/armada-game-launch ~/.lsfg %command%".into(),
+            // ARM handhelds on Armada need its ARM64 Proton, its launch wrapper and the lsfg frame-generation hook;
+            // a regular x86 machine (Steam Deck) uses Valve's Proton and plain launch options.
+            proton_tool: if cfg!(target_arch = "aarch64") { "proton-experimental-arm64" } else { "proton_experimental" }.into(),
+            launch_options: if cfg!(target_arch = "aarch64") && std::path::Path::new("/usr/libexec/armada/armada-game-launch").exists() {
+                "/usr/libexec/armada/armada-game-launch ~/.lsfg %command%".into()
+            } else { String::new() },
             browser_shortcut_id: None,
             parallel_jobs: 2,
             launcher: "steam".into(),

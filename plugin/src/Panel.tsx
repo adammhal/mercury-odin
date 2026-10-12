@@ -15,6 +15,7 @@ const onStorePage = () =>
   ((window as any).SteamUIStore?.WindowStore?.GamepadUIMainWindowInstance?.m_history?.location?.pathname ?? "").startsWith("/steamweb");
 
 export function Panel() {
+  const [status] = usePoll(api.status, 0);
   const visible = useQuickAccessVisible();
   const [jobs, err] = usePoll(api.jobs, visible ? 1500 : 0, [visible]);
   const [store, setStore] = useState<{ appid: number; name: string }>();
@@ -52,7 +53,7 @@ export function Panel() {
         {active.map((j) => <PanelSectionRow key={j.id}><JobProgress job={j} /></PanelSectionRow>)}
         {jobs && !active.length && <PanelSectionRow><div style={{ color: C.dim, fontSize: 12 }}>Nothing downloading.</div></PanelSectionRow>}
         <PanelSectionRow><ButtonItem layout="below" onClick={() => go("/mercury")}>Open Mercury</ButtonItem></PanelSectionRow>
-        <PanelSectionRow><ButtonItem layout="below" onClick={confirmRebootAndroid}>Restart into Android</ButtonItem></PanelSectionRow>
+        {status?.boot_switch && <PanelSectionRow><ButtonItem layout="below" onClick={confirmRebootAndroid}>Restart into Android</ButtonItem></PanelSectionRow>}
         {active.length > 0 && <PanelSectionRow><ButtonItem layout="below" onClick={() => go("/mercury/downloads")}>All downloads</ButtonItem></PanelSectionRow>}
       </PanelSection>
     </>
