@@ -53,7 +53,8 @@ impl Rd {
     }
 
     pub async fn add_magnet(&self, magnet: &str) -> Result<String> {
-        let r = self.send(self.http.post(format!("{BASE}/torrents/addMagnet")).form(&[("magnet", magnet)])).await?;
+        let magnet = with_trackers(magnet);
+        let r = self.send(self.http.post(format!("{BASE}/torrents/addMagnet")).form(&[("magnet", magnet.as_str())])).await?;
         let v: serde_json::Value = r.json().await?;
         v["id"].as_str().map(String::from).ok_or_else(|| anyhow!("no torrent id"))
     }
@@ -80,5 +81,38 @@ impl Rd {
 
     pub async fn user(&self) -> Result<serde_json::Value> {
         Ok(self.send(self.http.get(format!("{BASE}/user"))).await?.json().await?)
+    }
+}
+
+/// Public trackers added to magnets that carry none. The server builds magnets from .torrent files and drops their
+/// trackers, so for a small swarm Real-Debrid would have to find peers through DHT alone and often gives up.
+const TRACKERS: &[&str] = &[
+    "udp://tracker.opentrackr.org:1337/announce",
+    "udp://open.demonii.com:1337/announce",
+    "udp://tracker.torrent.eu.org:451/announce",
+    "udp://open.stealth.si:80/announce",
+    "udp://exodus.desync.com:6969/announce",
+    "udp://tracker.tiny-vps.com:6969/announce",
+];
+
+pub fn with_trackers(magnet: &str) -> String {
+    if magnet.contains("tr=") || !magnet.starts_with("magnet:") { return magnet.to_string(); }
+    let mut out = magnet.to_string();
+    for t in TRACKERS { out.push_str("&tr="); out.push_str(&urlencoding::encode(t)); }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::with_trackers;
+    #[test]
+    fn adds_trackers_only_when_missing() {
+        let bare = "magnet:?xt=urn:btih:0d4e7dae5ed85e1f25dcbd929551a5fb2658853d&dn=Feed";
+        let out = with_trackers(bare);
+        assert!(out.starts_with(bare) && out.contains("&tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337%2Fannounce"));
+        assert_eq!(crate::cache::info_hash(&out), crate::cache::info_hash(bare));
+        let has = format!("{bare}&tr=udp%3A%2F%2Fexample.org%3A80");
+        assert_eq!(with_trackers(&has), has);
+        assert_eq!(with_trackers("https://x"), "https://x");
     }
 }

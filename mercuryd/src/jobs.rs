@@ -744,7 +744,9 @@ impl Manager {
             let hoster_links = if let Some(magnet) = &job.source.magnet {
                 let tid = match &job.torrent_id { Some(t) => t.clone(), None => {
                     let t = rd.add_magnet(magnet).await?;
-                    rd.select_all(&t).await?;
+                    // Real-Debrid is still converting a new magnet, so selecting files can answer 404 for a moment.
+                    // The loop below selects them once the torrent reaches waiting_files_selection.
+                    if let Err(e) = rd.select_all(&t).await { if !e.to_string().contains("404") { return Err(e); } }
                     self.update(id, |j| j.torrent_id = Some(t.clone()));
                     t
                 }};
