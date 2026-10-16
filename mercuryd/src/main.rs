@@ -177,6 +177,7 @@ async fn new_job(State(a): State<App>, Json(j): Json<NewJob>) -> R {
 #[derive(Deserialize)]
 struct Since { #[serde(default)] since: u64 }
 async fn browser_downloads(Query(q): Query<Since>) -> R { Ok(Json(json!(browser::list(&config::browser_downloads_dir(), q.since)))) }
+async fn browser_progress(Query(q): Query<Since>) -> R { Ok(Json(json!(browser::in_progress(&config::browser_downloads_dir(), q.since)))) }
 
 #[derive(Deserialize, Default)]
 struct Act {
@@ -576,6 +577,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/sources/cached", post(rd_cached))
         .route("/jobs", get(list_jobs).post(new_job))
         .route("/browser/downloads", get(browser_downloads))
+        .route("/browser/progress", get(browser_progress))
         .route("/jobs/clear", post(clear_jobs))
         .route("/jobs/{id}/{act}", post(job_action))
         .route("/library", get(library))

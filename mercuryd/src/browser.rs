@@ -48,6 +48,24 @@ pub fn list(dir: &Path, since: u64) -> Vec<LocalFile> {
     out
 }
 
+/// A download Firefox is still writing: its `.part` file grows until the download ends.
+#[derive(Serialize, Clone, Debug)]
+pub struct Partial { pub name: String, pub size: u64, pub modified: u64 }
+
+/// Partial downloads touched since `since`. Used to show progress while Firefox keeps downloading in the background.
+pub fn in_progress(dir: &Path, since: u64) -> Vec<Partial> {
+    let Ok(rd) = std::fs::read_dir(dir) else { return vec![] };
+    let mut out: Vec<Partial> = rd.flatten().map(|e| e.path()).filter(|p| p.is_file()).filter_map(|p| {
+        let name = p.file_name()?.to_str()?.to_string();
+        if !(name.ends_with(".part") || name.ends_with(".crdownload")) { return None; }
+        let modified = mtime(&p);
+        if modified < since { return None; }
+        Some(Partial { size: std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0), modified, name })
+    }).collect();
+    out.sort_by(|a, b| b.modified.cmp(&a.modified));
+    out
+}
+
 /// The chosen file plus the other parts of the same multi-part set, if any.
 pub fn with_siblings(file: &Path) -> Vec<PathBuf> {
     let Some(dir) = file.parent() else { return vec![file.to_path_buf()] };
@@ -76,6 +94,18 @@ mod tests {
         assert_eq!(part_stem("Game.r01"), "Game");
         assert_eq!(part_stem("Game.7z.003"), "Game");
         assert_eq!(part_stem("TUNIC-SteamRIP.com.rar"), "TUNIC-SteamRIP.com");
+    }
+    #[test]
+    fn partials() {
+        let d = std::env::temp_dir().join(format!("mercury-p-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("Game.aB12.zip.part"), vec![0u8; 5000]).unwrap();
+        std::fs::write(d.join("Game.zip"), b"").unwrap();
+        let p = in_progress(&d, 0);
+        assert_eq!(p.len(), 1);
+        assert_eq!(p[0].size, 5000);
+        assert!(in_progress(&d, u64::MAX).is_empty());
+        std::fs::remove_dir_all(d).unwrap();
     }
     #[test]
     fn finished_and_siblings() {

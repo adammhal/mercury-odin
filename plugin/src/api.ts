@@ -73,6 +73,7 @@ export const api = {
   install: (appid: number, name: string, source: Source, local_file?: string, update = false) =>
     req<Job>("/jobs", "POST", { appid, name, source, local_file, update }),
   updateCheck: (appid: number) => req<UpdateInfo>(`/library/${appid}/update`),
+  browserProgress: (since: number) => req<{ name: string; size: number; modified: number }[]>(`/browser/progress?since=${since}`),
   browserDownloads: (since: number) => req<LocalFile[]>(`/browser/downloads?since=${since}`),
   act: (id: number, act: string, body?: object) => req<unknown>(`/jobs/${id}/${act}`, "POST", body ?? {}),
   clearJobs: () => req<{ cleared: number }>("/jobs/clear", "POST", {}),

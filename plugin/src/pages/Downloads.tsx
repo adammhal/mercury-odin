@@ -1,7 +1,8 @@
-import { ConfirmModal, Focusable, Navigation, showModal } from "@decky/ui";
+import { ConfirmModal, Field, Focusable, Navigation, ProgressBar, showModal } from "@decky/ui";
 import { toaster } from "@decky/api";
-import { api, cdn, Job } from "../api";
+import { api, bytes, cdn, Job } from "../api";
 import { usePoll } from "../hooks";
+import { backToBrowser, cancelBrowserDownload, pending, progress } from "../browser";
 import { runInstaller } from "../steam";
 import { Btn, C, FocusStyle, JobProgress, page } from "../ui";
 
@@ -41,7 +42,25 @@ export function Downloads() {
             }}>Clear finished</Btn>}
         </Focusable>
         {err && <div style={{ color: C.bad }}>Mercury engine is not responding: {err}</div>}
-        {jobs && !list.length && <div style={{ color: C.dim }}>Nothing downloading. Pick a game and a source to start.</div>}
+        {jobs && !list.length && !pending && <div style={{ color: C.dim }}>Nothing downloading. Pick a game and a source to start.</div>}
+        {pending && (
+          <div style={{ display: "flex", gap: 12, alignItems: "center", background: C.panel, borderRadius: 6, padding: 10, marginBottom: 8 }}>
+            <div style={{ flex: "none", width: 120, height: 56, borderRadius: 5, background: `url(${cdn(pending.appid, "header.jpg")}) center/cover` }} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <Field label={pending.name} childrenLayout="below" bottomSeparator="none"
+                description={progress
+                  ? `Downloading in Firefox · ${bytes(progress.bytes)}${progress.total ? ` of ${bytes(progress.total)}` : ""}`
+                  : "Waiting for the download to start in Firefox"}>
+                <ProgressBar nProgress={progress?.total ? Math.min(99, (progress.bytes / progress.total) * 100) : 0} indeterminate={!progress?.total} />
+              </Field>
+              <div style={{ fontSize: 12, color: C.dim, marginTop: 4 }}>Mercury installs it when the file finishes. Firefox can stay in the background.</div>
+            </div>
+            <Focusable flow-children="horizontal" style={{ display: "flex", gap: 8 }}>
+              <Btn style={{ width: 120, height: 30, fontSize: 12 }} onClick={backToBrowser}>Back to Firefox</Btn>
+              <Btn style={{ width: 110, height: 30, fontSize: 12 }} onClick={() => { cancelBrowserDownload(); reload(); }}>Stop waiting</Btn>
+            </Focusable>
+          </div>
+        )}
         <Focusable flow-children="vertical">
           {list.map((j) => (
             <div key={j.id} style={{ display: "flex", gap: 12, alignItems: "center", background: C.panel, borderRadius: 6, padding: 10, marginBottom: 8 }}>

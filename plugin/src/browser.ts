@@ -1,4 +1,5 @@
 import { toaster } from "@decky/api";
+import { Navigation } from "@decky/ui";
 import { api, Source } from "./api";
 import { gameId } from "./steam";
 
@@ -16,10 +17,42 @@ function setPending(p: Pending | undefined) {
   try { p ? localStorage.setItem(KEY, JSON.stringify(p)) : localStorage.removeItem(KEY); } catch { /* storage unavailable */ }
 }
 
+/** Progress of the download Firefox is writing right now, for the Downloads page. */
+export let progress: { bytes: number; total: number; since: number } | undefined;
+let navigatedFor = 0;
+let firstSeen = 0;
+
+/** Back to the Firefox window; it keeps running while Mercury's pages are in front. */
+export function backToBrowser() {
+  if (pending) SteamClient.Apps.RunGame(gameId(pending.shortcut), "", -1, 100);
+}
+
 /** Lines prefixed [Mercury] end up in ~/.local/share/Steam/logs/cef_log.txt on the Odin. */
 const log = (...a: unknown[]) => console.log("[Mercury] browser download:", ...a);
 
 const SAFE_URL = /^https:\/\/[A-Za-z0-9\-._~:\/?#\[\]@!&()*+,;=%]+$/;
+
+/** SteamRIP's own page for a game. MegaDB and a few other hosts only serve visitors who come from steamrip.com, so the
+ * download starts from there (a real click on its button). Titles with punctuation WordPress rewrites in its addresses
+ * go to the site's search instead of a guessed address. */
+export function steamripPage(sourceName: string): string {
+  const title = sourceName.replace(/\s*\([^)]*\)\s*$/, "").trim();
+  if (/^[A-Za-z0-9 ]+$/.test(title)) return `https://steamrip.com/${title.toLowerCase().replace(/ +/g, "-")}/`;
+  return `https://steamrip.com/?s=${encodeURIComponent(title.replace(/\s*free download\s*$/i, "")).replace(/'/g, "%27")}`;
+}
+
+/** Steam Input layout for the browser shortcut: the stock Steam Deck "Web Browser" layout. The right stick moves the
+ * pointer, the left stick scrolls, the triggers click, a face button opens the on-screen keyboard. Without it Firefox sees
+ * a plain gamepad and nothing but the touchscreen works. Only Deck-family controllers (the Deck, the Odin) have it. */
+function applyBrowserLayout(shortcut: number) {
+  const store = (window as any).controllerConfiguratorStore;
+  const controllers: any[] = (window as any).ControllerStore?.m_controllerList ?? [];
+  for (const c of controllers) {
+    if (c.unVendorID !== 0x28de || ![0x1205, 0x12f0].includes(c.unProductID)) continue;
+    try { store?.SetActiveConfigForApp(shortcut, c.nControllerIndex, "template://controller_neptune_webbrowser.vdf", false); }
+    catch (e: any) { log("could not set the browser controller layout:", e?.message); }
+  }
+}
 
 /** The "Mercury Browser" shortcut runs Firefox natively. Steam's own browser cannot save downloads. */
 async function browserShortcut(): Promise<number> {
@@ -38,10 +71,13 @@ async function browserShortcut(): Promise<number> {
 
 /** Open the source's page in Firefox and wait for the user to download the file there. */
 export async function downloadInBrowser(appid: number, name: string, source: Source, update = false) {
-  const url = source.url ?? source.urls?.[0];
+  const direct = source.url ?? source.urls?.[0];
+  // SteamRIP sources open SteamRIP's own game page, where the host buttons are.
+  const url = direct && source.provider === "SteamRIP" ? steamripPage(source.name) : direct;
   // The URL lands in a Steam launch option, which Steam runs through /bin/sh.
   if (!url || !SAFE_URL.test(url)) throw new Error("This source has no usable link");
   const id = await browserShortcut();
+  applyBrowserLayout(id);
   const gid = gameId(id);
   try { SteamClient.Apps.TerminateApp(gid, false); } catch { /* not running */ }
   const { browser } = await api.status();
@@ -53,7 +89,7 @@ export async function downloadInBrowser(appid: number, name: string, source: Sou
   SteamClient.Apps.RunGame(gid, "", -1, 100);
 }
 
-export function cancelBrowserDownload() { setPending(undefined); }
+export function cancelBrowserDownload() { setPending(undefined); progress = undefined; navigatedFor = 0; firstSeen = 0; }
 
 let lastSize = new Map<string, number>();
 let failures = 0;
@@ -63,6 +99,20 @@ let failures = 0;
 export async function checkBrowserDownload() {
   const p = pending;
   if (!p) return;
+  // A download is running: show its progress in Mercury, and a few seconds after it starts take the user back to Mercury.
+  // Firefox keeps downloading in the background, and "Back to Firefox" on the Downloads page returns to it.
+  try {
+    const parts = await api.browserProgress(p.since);
+    if (parts.length) {
+      progress = { bytes: parts.reduce((n, x) => n + x.size, 0), total: p.source.size_bytes || 0, since: p.since };
+      if (!firstSeen) firstSeen = Date.now();
+      if (navigatedFor !== p.since && Date.now() - firstSeen > 6000) {
+        navigatedFor = p.since;
+        Navigation.Navigate("/mercury/downloads");
+        toaster.toast({ title: "Mercury", body: `Downloading ${p.name} in Firefox. Mercury installs it when it finishes.` });
+      }
+    } else { progress = undefined; firstSeen = 0; }
+  } catch { /* the file check below reports engine problems */ }
   let files;
   try { files = await api.browserDownloads(p.since); } catch (e: any) { log("engine not reachable:", e.message); return; }
   const archives = files.filter((f) => f.archive);
@@ -87,7 +137,7 @@ export async function checkBrowserDownload() {
     return;
   }
   log("install started for", p.name);
-  setPending(undefined); failures = 0; lastSize = new Map();
+  setPending(undefined); failures = 0; lastSize = new Map(); progress = undefined; firstSeen = 0; navigatedFor = 0;
   // The file is Mercury's now, so take the user back to Steam.
   try { SteamClient.Apps.TerminateApp(gameId(p.shortcut), false); } catch { /* already closed */ }
   toaster.toast({ title: "Mercury", body: `Got ${pick.name}. Installing ${p.name} now.` });
